@@ -53,6 +53,9 @@
   执行不了 shell、套不了娃（白名单笼：辩手 6 项、制图员 3 项，ADR-0022）。
 - **QAS-5 接管可见**: 辩论期间发起会话空闲可说话（host 后台直驱，不占 turn）；
   忙闲每轮采样可见、一键双停停两边、打断点在实录可指（ADR-0023）。
+  前台占位 turn（ADR-0027）：建单后 `followup` 拉起真实可取消 turn，模型调唯一
+  阻塞式 hold 工具挂起即运行态（蓝字 + 停止按钮）；心跳走 mirror + 面板 `progress`
+  轮询；用户点停 abort 后台、后台 settlement 收前台，双向收尾不留僵尸。
 - **QAS-6 单线零污染**: 默认单线分叉跑在 fork 子会话里（种子继承发起会话上下文，
   主会话只收转述 + 摘要）；互盲拿掉后挑战者逐条引用建构原文；辩论结束分叉扫掉，
   只留结论文档（ADR-0024）。
@@ -278,13 +281,13 @@ sequenceDiagram
 - **接管（只做停两边，不做续跑，ADR-0023）**：`/api/stop` abort 后台 + 记 `interruptedAt`
  （transcript 断点，面板画线）；`/api/interrupt` 先 `parent.cancel keepInbox` 留住用户刚说的话，
   再 abort 后台；`parentBusy` 每轮边界采样 `parent.status`，面板显示忙闲。
+- **前台占位（ADR-0027，主路径）**：`POST start` 建单后 host 对 parent `followup()` 拉起占位 turn（idle 起 driver，running 只排队）；模型在该 turn 内调唯一阻塞式 hold 工具，`execute` 内 `await` 辩论 settlement（done/failed/stopped 任一即 return）。turn 活着即心跳（蓝字 + 停止按钮），秒级进度走 `mirror` + `progress` 轮询旁路。双向收尾：用户点停 → tool abort → abort `controllers` 后台；后台 settlement → `parent.cancel` 收占位 turn 再 `followup`/mirror 终局。
 
 ### 4.5 Deployment View
 
 - **Purpose**: 单包双 bundle，dev 联调用 3090；辩论与任务同一包发布，无独立发版节拍。
 - **Elements**: `lib/index.js`（host：deliberation 接线）+ `lib/client.js`（bundle：辩论 Dialog，
-  经 `dsh.client` 声明）；`cordis.patch.yml` 插入组合；`dsh.plugin.json` 声明零模型工具
-  （人工操作插件，`contributes.tools` 为空）与三槽位（overlay / input.right + 设置节）。
+  经 `dsh.client` 声明）；`cordis.patch.yml` 插入组合；`dsh.plugin.json` 声明模型工具仅一个前台占位 hold 工具（ADR-0027 对 S28 零工具的唯一例外）与三槽位（overlay / input.right + 设置节）。
   dev 用 `dsh --profile dev --port 3090 --no-open`，client 硬刷（Ctrl+Shift+R）。
 
 ### 4.6 Security View
@@ -324,6 +327,7 @@ sequenceDiagram
 - [ADR-0022](adr/0022-tool-cage-allowlist.md): 工具笼改白名单（辩手 6 项、制图员 3 项）。
 - [ADR-0023](adr/0023-session-takeover-b.md): 会话接管 B 方案——忙快照 + 一键双停 + 打断可映射。
 - [ADR-0024](adr/0024-single-thread-fork.md): 单线分叉——单模型双角色交替线默认驱动。
+- [ADR-0027](adr/0027-foreground-placeholder.md): 前台占位 turn——唯一阻塞式 hold 工具 + 双向收尾（S28 修订为 hold 例外）。
 - [ADR-0034](adr/0034-oneshot-startactivation.md): one-shot 改走 `startActivation`——宿主 seam
   换代（`subagents.start` 已移除），`toolFilter` 无处可挂，笼只留常驻线，one-shot 满血直调。
 

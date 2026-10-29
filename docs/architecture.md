@@ -167,7 +167,7 @@ flowchart TD
 ### 4.5 Deployment/Physical View
 
 - **Purpose**: 单包双 bundle，dev 联调用 3090；辩论与任务同一包发布，无独立发版节拍。
-- **Elements**: `lib/index.js`（host：deliberation 接线 + task 接线）+ `lib/client.js`（bundle：辩论 Dialog + TaskDialog 双面板同 overlay，经 `dsh.client` 声明）；`cordis.patch.yml` 插入组合；`dsh.plugin.json` 声明**零模型工具**（人工操作插件，`contributes.tools` 为空）与三槽位（overlay/input.right + 设置节）。dev 用 `dsh --profile dev --port 3090 --no-open`，client 硬刷（Ctrl+Shift+R）。
+- **Elements**: `lib/index.js`（host：deliberation 接线 + task 接线）+ `lib/client.js`（bundle：辩论 Dialog + TaskDialog 双面板同 overlay，经 `dsh.client` 声明）；`cordis.patch.yml` 插入组合；`dsh.plugin.json` 声明模型工具仅一个前台占位 hold 工具（ADR-0027 对零工具的唯一例外）与三槽位（overlay/input.right + 设置节）。dev 用 `dsh --profile dev --port 3090 --no-open`，client 硬刷（Ctrl+Shift+R）。
 
 ### 4.6 Security View
 
@@ -202,6 +202,7 @@ flowchart TD
 - [ADR-0024](adr/0024-single-thread-fork.md): 单线分叉——单模型双角色交替线（互盲拿掉：挑战者能看到建构原文逐条反驳；载体用分叉保主会话零污染；种子照抄原生 fork；防呆 `isRouteIneffective` 豁免单线）。
 - [ADR-0025](adr/0025-task-merge.md): 增强入口与跨仓任务并入——输入框按钮改"✦ 增强"弹菜单（辩论/多仓任务），原生发送键不借用（`inputActions` 全仓只有 `setDraft`）；task 三纯模块并入 `src/cross_tasks/`（S23 由 `src/task/` 改名，原型废弃后腾名），路由挂 `/dsh-session-enhance/api/task/*` 8 条，模型工具零个（人工操作插件，面板 HTTP 路由驱动），launch 三道门 + issued 门照抄 launcher。
 - [ADR-0026](adr/0026-task-autofill-preview.md): 任务面板打开即扫 + 预览即确认门——父目录默认只用当前会话 cwd（偏好旧值忽略防串台），repo 全勾/牵头首个/slug 自拟自动回填（⚠️ 回填部分已被 ADR-0028 作废：scan 只展示，涉及仓由推荐定）；"扫描结构"按钮改为"重新扫描"；build 成功直接进预览（逐仓"仓→cwd→provider/model"），确认才 launch（确认即签发带 `skipIssuedCheck`，issued 门只拦外部直调）。
+- [ADR-0027](adr/0027-foreground-placeholder.md): 前台占位 turn——唯一阻塞式 hold 工具 + 双向收尾（S28 零工具的唯一例外；WIRE-01/门禁 T3 同改）。
 - [ADR-0028](adr/0028-task-recommend-review.md): 任务面板 AI 推荐涉及仓 + 入口前置草稿门——`task/recommend` 按任务描述推荐涉及仓（只给推荐 + 理由 + 标题，人审核；判不出回空选 + 手勾）；入口改名"✦ 增强会话"，空草稿整钮禁用（有意反转 ADR-0025 可达性）；WIRE-01 task 路由 7→8 条。（部分被 ADR-0029 作废：牵头取首个 + 标题机制。）
 - [ADR-0029](adr/0029-task-no-lead-slug-desc.md): 去牵头仓 + slug 按任务 + 去标题字段——协调位即任务目录自身（directive `lead:` 写 none）；slug 从描述/AI 标题经 `suggestSlugFromText` 定（不再从父目录取工程名）；留任务描述去一句话标题（标题位直接用描述，截 80）；recommend 成功/失败透出 stopReason/rawLen（失败带 rawHead）供排障。
 - [ADR-0030](adr/0030-recommend-context-and-log.md): 推荐链补上下文与可观测——候选仓带一行自述（`candidates.ts`：package/module.toml/README/目录），模型输出写法宽容归一（`normalizeRepoRef`/`matchRecommended`），空推荐回候选清单 + 原文，推荐尝试进 20 条环形缓冲并开只读路由 `task/recommend/log`（WIRE-01 8→9 条），排障走 `scripts/probe-recommend.mjs` 直打真实 host（部分修订 ADR-0028：候选不再只给路径）。
