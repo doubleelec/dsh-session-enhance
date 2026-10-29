@@ -185,8 +185,11 @@ flowchart TD
     当前模型）+ `stepOpenSingle` / `stepRoundSingle`（建构先写、挑战再写，串行，无互盲）+
     `sweepSingleThread`（文档落盘后删分叉文件，只留结论文档，失败记 `sweepError` 留痕）；
     `stepOpenResident` / `stepRoundResident`（开题互盲、交锋串行）；
-    一次性回退 `askSubagent`（spawn + 工具笼 + 6min 单步超时 + 实报）与
-    `stepOpen` / `stepRound` / `stepSynthesize`；`mode` 三态 + `residentError` 记录整条回退链
+    一次性回退 `askSubagent`（startActivation + `provider: spawn` + `delivery: caller` +
+    6min 单步超时 + 实报）与
+    `stepOpen` / `stepRound` / `stepSynthesize`；白名单笼只挂常驻 / 单线 setup 那条线，
+    one-shot 经 startActivation 起、请求体不接受 toolFilter,因此是满血直调（ADR-0034）；
+    `mode` 三态 + `residentError` 记录整条回退链
     （`single:…; resident:…`）；共用 `runHostDebate`（后台直驱 open → round×N → synthesize +
     停机三条件）、`createFullParent`（webhook 样板挂 preset）、`mirror`
     （`user/message` + `surfaceOp:append`）、`focusBlockOf` / `chatDigest` / `finalStatement`、
@@ -285,7 +288,9 @@ sequenceDiagram
 
 - **Purpose**: 插件只读不写：辩手满血读证据，但写盘 / 执行 / 套娃三条路焊死。
 - **Elements**: 工具笼白名单（ADR-0022：辩手 6 项、制图员 3 项，fail-closed；启动交集核对
-  失效剔除、空集显式失败；scope-local 走执行期 `scopedToolGuard`；`tools.restrict` 单向收窄）；
+  失效剔除、空集显式失败；scope-local 走执行期 `scopedToolGuard`；`tools.restrict` 单向收窄；
+  笼只挂常驻 / 单线 setup——one-shot 经 `startActivation` 起、请求体不接受 `toolFilter`，
+  因此是满血直调，见 ADR-0034）；
   自建 parent 挂默认 preset（ADR-0012）；原生发送键只许碰 `setDraft`（建单后清空草稿），
   `submit` 及其他键面板代码禁触。
 
@@ -316,6 +321,8 @@ sequenceDiagram
 - [ADR-0022](adr/0022-tool-cage-allowlist.md): 工具笼改白名单（辩手 6 项、制图员 3 项）。
 - [ADR-0023](adr/0023-session-takeover-b.md): 会话接管 B 方案——忙快照 + 一键双停 + 打断可映射。
 - [ADR-0024](adr/0024-single-thread-fork.md): 单线分叉——单模型双角色交替线默认驱动。
+- [ADR-0034](adr/0034-oneshot-startactivation.md): one-shot 改走 `startActivation`——宿主 seam
+  换代（`subagents.start` 已移除），`toolFilter` 无处可挂，笼只留常驻线，one-shot 满血直调。
 
 ## 6. Constraints and Risks
 

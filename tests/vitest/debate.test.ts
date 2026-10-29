@@ -465,11 +465,16 @@ describe('stop protocol', () => {
 describe('stepwise loop', () => {
   const fakeSubagents = (texts: string[]) => {
     let i = 0
+    const seen: unknown[] = []
     return {
-      start: async () => ({
-        result: Promise.resolve({ output: [{ type: 'text', text: texts[i++] ?? 'x' }], stopReason: 'completed' }),
-        dispose: async () => {},
-      }),
+      seen,
+      startActivation: async (spec: unknown) => {
+        seen.push(spec)
+        return {
+          result: Promise.resolve({ output: [{ type: 'text', text: texts[i++] ?? 'x' }], stopReason: 'completed' }),
+          dispose: async () => {},
+        }
+      },
     }
   }
   const parent = { session: { id: 's' } } as never
@@ -507,6 +512,33 @@ describe('stepwise loop', () => {
     const s = makeSession()
     s.config.challenger = { provider: 'local-proxy', model: 'other' }
     await expect(stepOpen(fakeSubagents(['MODEL:local-proxy/a', 'MODEL:local-proxy/a']) as never, parent, s, signal)).rejects.toThrow('model-route-ineffective')
+  })
+  it('one-shot 走 startActivation 新 seam:spec 挂 spawn + caller,无 toolFilter', async () => {
+    const s = makeSession()
+    const subs = fakeSubagents(['map'])
+    await stepSynthesize(subs as never, parent, s, signal)
+    const spec = (subs.seen[0] ?? {}) as {
+      provider?: unknown; label?: unknown; delivery?: unknown
+      request?: { parent?: unknown; prompt?: unknown; signal?: unknown; agentOptions?: unknown; toolFilter?: unknown }
+    }
+    expect(spec.provider).toBe('spawn')
+    expect(spec.delivery).toBe('caller')
+    expect(typeof spec.label).toBe('string')
+    expect(Array.isArray(spec.request?.prompt)).toBe(true)
+    expect(spec.request?.parent).toBe(parent)
+    expect(spec.request?.signal).toBeDefined()
+    expect(spec.request?.agentOptions).toEqual({ provider: 'local-proxy', model: 'opencode-muse-spark-1.3' })
+    expect('toolFilter' in (spec.request ?? {})).toBe(false)
+  })
+  it('one-shot 非 completed 实报 stopReason,不吞成 aborted', async () => {
+    const s = makeSession()
+    const subs = {
+      startActivation: async () => ({
+        result: Promise.resolve({ output: [], stopReason: 'refusal' }),
+        dispose: async () => {},
+      }),
+    }
+    await expect(stepSynthesize(subs as never, parent, s, signal)).rejects.toThrow('refusal')
   })
 })
 

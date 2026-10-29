@@ -26,15 +26,19 @@ export interface TextContentBlock {
   [key: string]: unknown
 }
 
-/** subagents.start 最小面(one-shot spawn 用)。 */
+/** subagents.startActivation 最小面(one-shot 用:宿主新 seam,provider 具名选择)。 */
 export interface SubagentsLike {
-  start(provider: string, req: {
-    parent: ParentAgent
-    prompt: TextContentBlock[]
+  startActivation(spec: {
+    provider: string
     label?: string
+    request: {
+      parent: ParentAgent
+      prompt: TextContentBlock[]
+      signal: AbortSignal
+      agentOptions?: { provider?: string; model?: string }
+    }
     signal: AbortSignal
-    agentOptions?: { provider?: string; model?: string }
-    toolFilter?: { allow?: string[]; deny?: string[] }
+    delivery: 'parent' | 'caller'
   }): Promise<{ result: Promise<{ output: TextContentBlock[]; stopReason: string }>; dispose(): Promise<void> }>
 }
 

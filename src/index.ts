@@ -1969,8 +1969,9 @@ export default {
           // 读注册表只能看到 host 视角,子 agent 的真实工具集以它自己的回答为准。
           // body: { sid } (parent 会话 id;不传则用第一个活体;无活体则自建满血 parent)。
           // 零业务成本:只问工具表,不跑辩论。自建 parent 用完即 dispose。
-          // S16 带笼模式:body.caged=true 时挂辩手白名单起,子 agent 报的是笼内视角
-          // (辩论结论"先跑一次带笼探针定出最小工具集"的落点);不传则裸起(全量对照)。
+          // one-shot 经 startActivation 起,请求体不接受 toolFilter,因此探针恒为满血视角:
+          // 带笼子 agent 视角请看常驻 setup 那条线(ADR-0022)。caged=true 仍接受但不再带笼,
+          // 回包 cage 记 null,免得调用方以为看到了笼内视角。
           let owned: { dispose(): Promise<void> } | null = null
           try {
             const body = await readJsonBody(req)
@@ -1997,15 +1998,19 @@ export default {
             const timer = setTimeout(() => ctl.abort(), 120000)
             const caged = (body as { caged?: unknown }).caged === true
             try {
-              const run = await subagents.start('spawn', {
-                parent,
-                prompt: [{
-                  type: 'text',
-                  text: '你是工具盘点员。只做一件事:列出你当前能调用的所有工具名,一行一个,不要解释,不要调用任何工具,不要输出别的。',
-                } as TextContentBlock],
+              const run = await subagents.startActivation({
+                provider: 'spawn',
                 label: 'se-debug-child-tools',
+                request: {
+                  parent,
+                  prompt: [{
+                    type: 'text',
+                    text: '你是工具盘点员。只做一件事:列出你当前能调用的所有工具名,一行一个,不要解释,不要调用任何工具,不要输出别的。',
+                  } as TextContentBlock],
+                  signal: ctl.signal,
+                },
                 signal: ctl.signal,
-                ...(caged ? { toolFilter: { allow: DEBATER_TOOL_ALLOW } } : {}),
+                delivery: 'caller',
               })
               try {
                 const result = await run.result
@@ -2015,7 +2020,8 @@ export default {
                   selfBuilt,
                   presetId,
                   caged,
-                  cage: caged ? cageLabel(DEBATER_TOOL_ALLOW, []) : null,
+                  cage: null,
+                  cageNote: caged ? 'startActivation 不接受 toolFilter,探针恒为满血视角(笼只挂常驻 setup)' : null,
                   stopReason: result.stopReason,
                   childTools: textOf(result.output),
                 })
@@ -2321,11 +2327,16 @@ export default {
             const ctl = new AbortController()
             const timer = setTimeout(() => ctl.abort(), 120000)
             try {
-              const run = await subagents.start('spawn', {
-                parent,
-                prompt: [{ type: 'text', text: prompt } as TextContentBlock],
+              const run = await subagents.startActivation({
+                provider: 'spawn',
                 label: 'se-task-recommend',
+                request: {
+                  parent,
+                  prompt: [{ type: 'text', text: prompt } as TextContentBlock],
+                  signal: ctl.signal,
+                },
                 signal: ctl.signal,
+                delivery: 'caller',
               })
               try {
                 const started = Date.now()

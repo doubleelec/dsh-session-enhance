@@ -42,10 +42,11 @@ function makeCtx(recommendText?: string): {
       // 推荐桩:用注文当模型输出(无注文时抛,走 ok:false 分支)。
       if (name === 'subagents') {
         return {
-          async start(_kind: unknown, args: unknown): Promise<never> {
+          async startActivation(spec: unknown): Promise<never> {
             if (recommendText === undefined) throw new Error('no subagents in route test')
             const text = recommendText
-            const blocks = (args as { prompt?: Array<{ text?: string }> })?.prompt ?? []
+            const req = (spec as { request?: { prompt?: Array<{ text?: string }> } })?.request
+            const blocks = req?.prompt ?? []
             prompts.push(blocks.map((b) => String(b?.text ?? '')).join('\n'))
             return {
               result: Promise.resolve({ output: [{ type: 'text', text }], stopReason: 'completed' }),

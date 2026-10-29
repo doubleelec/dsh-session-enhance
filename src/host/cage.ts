@@ -113,7 +113,7 @@ export function turnVerdict(idleMs: number, totalMs: number): 'ok' | 'stalled' |
   return 'ok'
 }
 
-/** 起一次 one-shot 子 agent 并取文本(带工具笼 + 单步超时 + 实报原因)。 */
+/** 起一次 one-shot 子 agent 并取文本(单步超时 + 实报原因)。 */
 export async function askSubagent(
   subagents: SubagentsLike,
   parent: ParentAgent,
@@ -133,15 +133,20 @@ export async function askSubagent(
   if (signal.aborted) onAbort()
   else signal.addEventListener('abort', onAbort, { once: true })
   try {
-    // S16 白名单:one-shot 无 schemas 核对挂载点(spawn 内部组装,父进程表未必是子表),
-    // 按种子先发、交系统 unknown 校验(挑战者终轮结论);scope-local 敞口见笼注释。
-    const run = await subagents.start('spawn', {
-      parent,
-      prompt: [{ type: 'text', text: prompt } as TextContentBlock],
+    // one-shot 经 startActivation 起(宿主 seam 已从 start 换成具名 provider + delivery):
+    // 请求体不再接受 toolFilter(只认 cwd/agentPreset/prompt/parent/signal/agentOptions/…).白名单笼
+    // 只挂常驻 setup 那条线(one-shot 无挂载点,见 ADR-0022);这里是满血直调,不假装有笼。
+    const run = await subagents.startActivation({
+      provider: 'spawn',
       label: `se-${sessionId}-${role}`,
+      request: {
+        parent,
+        prompt: [{ type: 'text', text: prompt } as TextContentBlock],
+        signal: timeout.signal,
+        agentOptions: { provider: route.provider, model: route.model },
+      },
       signal: timeout.signal,
-      agentOptions: { provider: route.provider, model: route.model },
-      toolFilter: { allow: toolAllowFor(role) },
+      delivery: 'caller',
     })
     try {
       let result: { output: TextContentBlock[]; stopReason: string }

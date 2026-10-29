@@ -286,7 +286,8 @@ sequenceDiagram
 ## 6. Constraints and Risks
 
 - **Technical Constraints**: 全部参数显式（不从调用会话 cwd 推导）；模板真身调用方显式传；
-  `subagents.start('spawn')` prompt 明写不要调工具；单 tsdown entry 约束 task 接线同文件；
+  推荐子 agent 经 `startActivation` 起（`provider: spawn` + `delivery: caller`），prompt 明写
+  不要调工具；单 tsdown entry 约束 task 接线同文件；
   单仓 try / catch（部分失败不整批毙掉）。
 - **Business Constraints**: 不改部署的 `standard` preset 文件；不发布 prod（3080）与 npm。
 - **Identified Risks**:

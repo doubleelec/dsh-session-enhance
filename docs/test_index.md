@@ -5,7 +5,7 @@ Human-facing catalog of the governance test suite. This file answers two questio
 1. **What does a given test enforce?** — look up any row below.
 2. **Is coverage complete?** — every governance test must have exactly one row; the meta-guard `test_governance_tests_are_indexed` fails on any gap in either direction.
 
-Scope: the **governance suite** (global kit + module-local `test_invariants.py`) **plus the vitest behavior suite** (`tests/vitest/`) — both gates in one catalog. Run them with `npm run test:sandbox` (vitest, 233) and `pytest tests/ -q` (governance + invariants). Unit tests are out of scope.
+Scope: the **governance suite** (global kit + module-local `test_invariants.py`) **plus the vitest behavior suite** (`tests/vitest/`) — both gates in one catalog. Run them with `npm run test:sandbox` (vitest, 269) and `pytest tests/ -q` (governance + invariants). Unit tests are out of scope.
 
 ## Global governance kit
 
@@ -64,7 +64,7 @@ One row per file (each file's cases are the gate). Run: `npm run test:sandbox`.
 
 | Test file | Enforces | Fails when |
 |:---|:---|:---|
-| `debate.test.ts` | 协议纯函数 + 回合推进 + 单线分叉 + 笼子交集 + 打断计划 | 判定/收敛/停机/工具笼任一语义漂移 |
+| `debate.test.ts` | 协议纯函数 + 回合推进 + 单线分叉 + 笼子交集 + 打断计划 + one-shot startActivation 回归 | 判定/收敛/停机/工具笼/子 agent 接线任一语义漂移 |
 | `persist.test.ts` | 落盘白名单 + 宽容反序列化 + 文件名净化 + markdown 结构 + mode 三态 + sweep | 历史局读不出或文档排布坏掉 |
 | `version.test.ts` | 构建期内联版本 + 三方对账 + stale 判据 | 徽标显示的版本不代表真实程序 |
 | `session.test.ts` | 会话 id 归一 + 增强入口 label | 面板开错会话或入口按钮回退 |

@@ -222,7 +222,9 @@ _Avoid_: 投喂，接力，转发
 一律排除（fail-closed）。辩手六项（读文件找证据 + 联网查证），
 制图员三项（只读实录，不联网）。启动时与宿主实际工具表取交集核对，
 失效名剔掉留痕，交集为空则显式失败、不无笼裸奔；scope-local 工具
-（`subagent`）走执行期 guard 拦。生效笼型记 `cageNote`，进已启动行与落盘。
+（`subagent`）走执行期 guard 拦。笼只挂常驻 / 单线 `setup`——one-shot
+经 `startActivation` 起、请求体不接受 `toolFilter`，是满血直调（ADR-0034）。
+生效笼型记 `cageNote`，进已启动行与落盘。
 _Avoid_: 黑名单，权限，沙箱
 
 ### 审计与协议
