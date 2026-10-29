@@ -41,6 +41,8 @@ import {
   auditPointers,
   parseGaps,
   gapAge,
+  missingSections,
+  isMirrorNoise,
   type DebateRound,
   type TranscriptEntry,
 } from '../../src/debate/debate'
@@ -539,6 +541,43 @@ describe('stepwise loop', () => {
       }),
     }
     await expect(stepSynthesize(subs as never, parent, s, signal)).rejects.toThrow('refusal')
+  })
+  it('H1 开题角色直通:两侧 label/路由各走各,不再复用 builder', async () => {
+    const s = makeSession()
+    const prompts: string[] = []
+    const routes: unknown[] = []
+    const labels: unknown[] = []
+    let n = 0
+    const subs = {
+      startActivation: async (spec: unknown) => {
+        const full = spec as { label?: unknown; request?: { prompt?: Array<{ text?: unknown }>; agentOptions?: unknown } }
+        labels.push(full.label)
+        const req = full.request
+        const text = req?.prompt?.[0]?.text
+        if (typeof text === 'string') prompts.push(text)
+        routes.push(req?.agentOptions)
+        // 链路测试不碰防呆:双方回显不同(DEFAULT builder spark vs challenger flash,见 B7)。
+        const echo = n++ === 0 ? 'MODEL:local-proxy/a' : 'MODEL:local-proxy/b'
+        return {
+          result: Promise.resolve({ output: [{ type: 'text', text: `${echo}\n## 结论摘要\nA\n## 详细论证\nB\n## 本轮变化\n无\nagree=false\nanswer=A` }], stopReason: 'completed' }),
+          dispose: async () => {},
+        }
+      },
+    }
+    await stepOpen(subs as never, parent, s, signal)
+    expect(prompts.length).toBe(2)
+    // 互盲开题:两侧都用建构开题 prompt 铺首轮(挑战者的钢人化从第 1 轮开始,
+    // 与 stepOpenResident/stepOpenSingle 同形)——H1 修的是 role/label/路由直通,不是 prompt。
+    expect(prompts.every((p) => p.includes('把答案空间铺满'))).toBe(true)
+    expect(prompts.some((p) => p.includes('钢人化复述'))).toBe(false)
+    // label 各走各的:不再两侧都挂 builder(H1 回归前 label 全是 se-t-builder)。
+    expect(labels.some((l) => typeof l === 'string' && (l as string).endsWith('-builder'))).toBe(true)
+    expect(labels.some((l) => typeof l === 'string' && (l as string).endsWith('-challenger'))).toBe(true)
+    // 路由各走各的:builder=默认 spark,challenger=默认 flash(见 B7)。
+    expect(routes).toEqual([
+      { provider: 'local-proxy', model: 'opencode-muse-spark-1.3' },
+      { provider: 'local-proxy', model: 'opencode-ds41-flash' },
+    ])
   })
 })
 
@@ -1157,6 +1196,43 @@ describe('v4 pending ledger', () => {
   it('缺「本轮变化」段时回落整篇比对(旧格式不破)', () => {
     const rec = toDebateRound(2, 'agree=true\nanswer=上 K8s', 'agree=true\nanswer=上K8s。', '旧文本')
     expect(rec.hasNewInfo).toBe(true)
+  })
+
+  it('H3 结构门:齐全三段记 null,缺段记名(只审计不 gate)', () => {
+    const full = '## 结论摘要\n立场\n## 详细论证\n论证\n## 本轮变化\n无'
+    expect(missingSections(full)).toEqual([])
+    // 旧局 se-mvtbip75-1 R2 builder 脏输出:15 字,无三段。
+    expect(missingSections('三条待决逐条有实测依据，成文。')).toEqual(['结论摘要', '详细论证', '本轮变化'])
+    expect(missingSections('## 结论摘要\n立场')).toEqual(['详细论证', '本轮变化'])
+    const rec = toDebateRound(2, '三条待决逐条有实测依据，成文。', `${full}\nagree=false\nanswer=乙`, '旧文本')
+    expect(rec.malformedSides).toEqual({ builder: ['结论摘要', '详细论证', '本轮变化'], challenger: [] })
+    const clean = toDebateRound(2, full, full, '旧文本')
+    expect(clean.malformedSides).toBeNull()
+  })
+
+  it('镜像噪声:对话区直播前缀一律可识别,不污染下一局问题', () => {
+    // onSide 标题带 **(如 **交锋第 1/5 轮·建构方(单线)**):^交锋第 认不出,必须另列。
+    for (const t of [
+      '⚔ 辩论开始:「问」(建构 a vs 挑战 b)',
+      '**交锋第 1/5 轮·建构方(单线)**\n摘要',
+      '**建构者开题(先到先播)**\n摘要',
+      '✅ 共识收敛:第 1 轮',
+      '🛑 焦点停滞:第 2 轮',
+      '📄 结论文档已存:`x.md`',
+      '⚠️ 制图员失败(boom)',
+      '⚠ 单线分叉与常驻建对均失败',
+      '⏳ 建构者开写中(单线)…',
+    ]) {
+      expect(isMirrorNoise(t)).toBe(true)
+    }
+    expect(isMirrorNoise('主库延迟高怎么办')).toBe(false)
+    // 噪声口径与背景提取同源:镜像进背景包会被过滤。
+    const ctx = extractSessionContext([
+      { type: 'user/message', data: { content: '主库延迟高怎么办' } },
+      { type: 'user/message', data: { content: '**交锋第 1/5 轮·建构方(单线)**\n摘要' } },
+    ])
+    expect(ctx).toContain('主库延迟高')
+    expect(ctx).not.toContain('交锋第')
   })
 })
 

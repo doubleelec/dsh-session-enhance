@@ -21,7 +21,7 @@ import { DEBATER_TOOL_ALLOW, SYNTH_TOOL_ALLOW, toolAllowFor, resolveToolAllow, v
 export { DEBATER_TOOL_ALLOW, SYNTH_TOOL_ALLOW, toolAllowFor, resolveToolAllow, visibleNamesOf, cageLabel, scopedToolGuard, askSubagent, turnVerdict, STEP_STALL_MS, STEP_HARD_CAP_MS, PROGRESS_POLL_MS } from './host/cage'
 import { SUBAGENT_DELEGATION_CONTEXT, RESIDENT_TURN_ATTEMPTS, readResidentEvents, heartbeatOf, extractHandoffConclusion, epochStopReason, epochStopDetail, createResidentPair, isRetriableTurnError, driveResidentTurn } from './host/resident'
 export { SUBAGENT_DELEGATION_CONTEXT, RESIDENT_TURN_ATTEMPTS, readResidentEvents, heartbeatOf, extractHandoffConclusion, epochStopReason, epochStopDetail, createResidentPair, isRetriableTurnError, driveResidentTurn } from './host/resident'
-import { DEFAULT_CONFIG, normalizeAnswer, isContinuationHint, SETTLED_DEFS_MAX, isOneSidedAccept, isTopicLoop, classifyQuestion, extractSessionContext, buildBuilderPrompt, buildBuilderRoundPrompt, buildChallengerPrompt, buildSynthesizerPrompt, renderTranscriptForSynthesizer, toDebateRound, roundConverged, convergedAtCap, isSaturated, pendingStalled, slimHandoff, formatPendingFocus, sectionText, parseAnswer, parseGaps, gapAge, extractDecisionSummary, buildFallbackSummary, DECISION_SECTION } from './debate/debate'
+import { DEFAULT_CONFIG, normalizeAnswer, isContinuationHint, SETTLED_DEFS_MAX, isOneSidedAccept, isTopicLoop, classifyQuestion, extractSessionContext, buildBuilderPrompt, buildBuilderRoundPrompt, buildChallengerPrompt, buildSynthesizerPrompt, renderTranscriptForSynthesizer, toDebateRound, roundConverged, convergedAtCap, isSaturated, pendingStalled, slimHandoff, formatPendingFocus, sectionText, missingSections, parseAnswer, parseGaps, gapAge, extractDecisionSummary, buildFallbackSummary, DECISION_SECTION, isMirrorNoise } from './debate/debate'
 export { isTopicLoop }
 export { renderTranscriptForSynthesizer, answerShapeOf, answerSpecOf } from './debate/debate'
 import { BUILD_VERSION, assessVersions, type VersionFacts } from './version'
@@ -644,7 +644,8 @@ function lastUserText(events: { type: string; data?: unknown }[]): string {
     const ev = events[i]
     if (ev.type !== 'user/message') continue
     const t = looseText(ev.data).trim()
-    if (t === '' || /^(?:辩论单|⚔\s*辩论|辩论开题|交锋第|成果地图)/.test(t) || /^(?:(?:那请)?继续(?:处理|吧)?|好|好的|收到|嗯|明白|了解|确认|ok|okay)(?:[，,、\s]*(?:(?:我)?(?:继续(?:处理|吧)?|处理)|收到|好的?))*[。！!，,\s]*$/i.test(t)) continue
+    // 镜像噪声口径与 debate.ts 同源(isMirrorNoise):onSide 标题 `**交锋…` 等新镜像前缀一律过滤。
+    if (t === '' || isMirrorNoise(t) || /^(?:(?:那请)?继续(?:处理|吧)?|好|好的|收到|嗯|明白|了解|确认|ok|okay)(?:[，,、\s]*(?:(?:我)?(?:继续(?:处理|吧)?|处理)|收到|好的?))*[。！!，,\s]*$/i.test(t)) continue
     return t
   }
   return ''
@@ -1047,15 +1048,29 @@ export async function runHostDebate(
     // 秒级直播:建单→自动判断完成即有进度,不用等第一个模型输出。
     setProgress(session, `已启动:「${auto.question}」(建构 ${session.config.builder.model} vs 挑战 ${session.config.challenger.model},共 ${session.config.maxRounds} 轮)。建构者开写中…`)
     mirror(parent, session, `⚔ 辩论开始:「${auto.question}」(建构 ${session.config.builder.model} vs 挑战 ${session.config.challenger.model},共 ${session.config.maxRounds} 轮,制图 ${session.config.synthesizer.model})。开题马上到,进度同步见面板。`)
+    // 开写镜像去重:互盲开题 path 会连调两次同一文案(setProgress 覆盖无感,
+    // mirror append 则会连刷两条同样的 ⏳ 行),连续相同只镜一次。
+    let lastStartMirrored = ''
     const live = {
       onStart: (who: string): void => {
         setProgress(session, who)
+        // 实时显示:每方开写即在发起会话对话区留一行(append 日志,不唤醒模型)。
+        // 用户在自己会话里即见"谁在写",不用切面板;进度全文仍在面板 state。
+        if (who !== lastStartMirrored) {
+          lastStartMirrored = who
+          mirror(parent, session, `⏳ ${who}`)
+        }
       },
       onSide: (who: string, title: string, text: string): void => {
         setProgress(session, `${title}已出,面板/对话区同步`)
         // v4:只镜像「结论摘要」前几行 + answer,不再把全文灌进对话区
         // (旧行为 10 轮灌 10.9 万字,对话区不可读);全文仍在 transcript,面板可看。
         mirror(parent, session, `**${title}**\n${chatDigest(text)}`)
+        // H3 结构门:缺段如实报(只审计不 gate——脏输出仍落 transcript,rounds 记 malformedSides)。
+        const missing = missingSections(text)
+        if (missing.length > 0) {
+          mirror(parent, session, `⚠️ ${title}缺段:缺「${missing.join('」「')}」(原文照收,停机判定已记 malformedSides,面板 rounds 可查)`)
+        }
       },
     }
     // S1:常驻优先——建对成功则开题+交锋全走交棒(handoff),记忆留在常驻会话里;
@@ -1225,18 +1240,31 @@ export async function runHostDebate(
     }
     session.stopReason = stop ?? 'maxRounds'
     setProgress(session, '交锋完成,制图员写地图中…')
-    await stepSynthesize(subagents, parent, session, signal, {
-      onStart: () => live.onStart('制图员写地图中…'),
-      onSide: (_role, text) => {
-        setProgress(session, '成果地图已出')
-        // v4 收尾陈述:制图员的「决策摘要」优先;漏写则用判定数据兜底。
-        // 兜底要传上限:只有 host 知道上限,猜上限等于实际轮数会把"提前收敛"误标成撞线。
-        // 缺口年龄同理:从 transcript 原文现算,不猜不编;制图员写了摘要则不打扰原文。
-        const decision = extractDecisionSummary(text)
-        session.decisionSummary = decision !== '' ? `## ${DECISION_SECTION}\n${decision}` : buildFallbackSummary(auto.question, session.rounds, session.stopReason, session.config.maxRounds, gapSpansOf(session))
-        mirror(parent, session, finalStatement(auto.question, session.decisionSummary))
-      },
-    })
+    // H5 制图失败兜底:制图 one-shot 炸了(旧局 se-mvtbip75-1 即死在这步),
+    // 交锋实录仍在——用判定数据拼 fallback 摘要,整局按 done-with-fallback 收,
+    // 不再整局 failed 让用户白等。error 如实记制图失败原因,面板/报告可查。
+    try {
+      await stepSynthesize(subagents, parent, session, signal, {
+        onStart: () => live.onStart('制图员写地图中…'),
+        onSide: (_role, text) => {
+          setProgress(session, '成果地图已出')
+          // v4 收尾陈述:制图员的「决策摘要」优先;漏写则用判定数据兜底。
+          // 兜底要传上限:只有 host 知道上限,猜上限等于实际轮数会把"提前收敛"误标成撞线。
+          // 缺口年龄同理:从 transcript 原文现算,不猜不编;制图员写了摘要则不打扰原文。
+          const decision = extractDecisionSummary(text)
+          session.decisionSummary = decision !== '' ? `## ${DECISION_SECTION}\n${decision}` : buildFallbackSummary(auto.question, session.rounds, session.stopReason, session.config.maxRounds, gapSpansOf(session))
+          mirror(parent, session, finalStatement(auto.question, session.decisionSummary))
+        },
+      })
+    } catch (e) {
+      const synthError = e instanceof Error ? e.message : String(e)
+      if (signal.aborted || synthError === 'aborted') throw e
+      session.mapText = null
+      session.error = `synthesizer-failed:${synthError}`
+      session.decisionSummary = buildFallbackSummary(auto.question, session.rounds, session.stopReason, session.config.maxRounds, gapSpansOf(session))
+      mirror(parent, session, `⚠️ 制图员失败(${synthError}),交锋实录仍在——先用判定数据兜底收尾,全文见面板 transcript。`)
+      mirror(parent, session, finalStatement(auto.question, session.decisionSummary))
+    }
     setProgress(session, '已完成')
     session.status = 'done'
     // 结论文档(ADR-0019):先落盘再报路径。
@@ -1408,7 +1436,7 @@ export async function stepOpen(
   live?.onStart?.('builder')
   live?.onStart?.('challenger')
   const runOne = async (role: 'builder' | 'challenger', route: { provider: string; model: string }): Promise<string> => {
-    const text = await askSubagent(subagents, parent, session.id, 'builder', buildBuilderPrompt(auto.question, lensObjs, auto.questionType, ctxText), route, signal)
+    const text = await askSubagent(subagents, parent, session.id, role, buildBuilderPrompt(auto.question, lensObjs, auto.questionType, ctxText), route, signal)
     pushEntry(session, role, 0, text)
     live?.onSide?.(role, text)
     return text

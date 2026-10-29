@@ -38,9 +38,12 @@
 - **QAS-1 可读性**: 5 轮辩论（约 13 次子调用，每方 4000+ 字）落进 720px 对话框时，
   提问者 30 秒内能说出"谁让了什么、新增了什么"。驱动分段折叠（摘要默认展开、论证折叠）
   与 `chatDigest` 镜像摘要（只取结论摘要前几行 + 当前答案，全文留 transcript）。
+  开写即镜一行 `⏳`（连续相同去重），缺段另镜告警行；镜像噪声口径同源（ADR-0035）。
 - **QAS-2 可审计性**: 任何"已一致 / 分歧"结论都能回跳到 `[R轮 #seq 角色]` 原文；
   中断原因（超时 / 人停 / 模型拒活）实报，不吞成 `aborted`。每轮判定输入落 `rounds[]`
   （agree / answer / hasNewInfo / 交棒字数 / 引用命中 + `protoVersion`，ADR-0014/0016）。
+  脏输出（缺三段）记 `malformedSides` 只审计不 gate；制图失败记 `synthesizer-failed`
+  不断局（ADR-0035）。
 - **QAS-3 不丢不卡**: 子 agent 调 `ask_user_question` 或大海捞针时必失败、不无限卡 `round=-1`；
   开题一边挂了另一边内容保留（`open-failed: builder=… challenger=…`）。
   **常驻轮次用进度感知超时**：一次性子 agent 走 6 分钟单步超时（无进度可见）；

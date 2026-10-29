@@ -371,6 +371,21 @@ export function sectionText(text: string, name: string): string {
   return sectionOf(text, name)
 }
 
+/**
+ * 输出结构门(H3):一方输出必须带齐三段(结论摘要/详细论证/本轮变化)。
+ * 旧局教训(se-mvtbip75-1 R2 builder 15 字脏输出,无三段、无 agree/answer):
+ * 这种输出不能进交棒/停机判定——解析出的空 answer 会污染收敛比对,
+ * 缺失的「本轮变化」段会让 hasNewInfo 回落整篇比对(永远 true)。
+ * 缺哪段就报哪段,host 侧如实 mirror,面板可观测。
+ */
+export function missingSections(text: string): string[] {
+  const missing: string[] = []
+  for (const name of ['结论摘要', '详细论证', '本轮变化'] as const) {
+    if (sectionOf(text, name) === '') missing.push(name)
+  }
+  return missing
+}
+
 /** 取三段中的一段(标题行原样,内容到下一个 ## 为止)。 */
 function sectionOf(text: string, name: string): string {
   const re = new RegExp(`##\\s*${name}\\s*([\\s\\S]*?)(?=\\n##\\s|$)`)
@@ -427,6 +442,8 @@ export interface DebateRound {
   pendingItems: string[] | null
   /** 挑战者本轮引用建构者原文的命中统计(B6/S3,见 auditQuotes)。 */
   quoteAudit: QuoteAudit
+  /** 任一方缺三段(旧局脏输出)时记缺段名;齐全记 null(只审计不 gate,见 missingSections)。 */
+  malformedSides?: { builder: string[]; challenger: string[] } | null
   /**
    * 本轮双方输出里的文件型出处指针存在性审计(只审计不 gate,见 auditPointers)。
    * 可选:老记录没有它,读到即 unknown(不 bump RECORD_VERSION,见 ADR-0021);
@@ -704,6 +721,12 @@ export function toDebateRound(
     protoVersion: STOP_PROTOCOL_VERSION,
     pendingItems: parsePendingItems(challengerOut),
     quoteAudit: auditQuotes(builderOut, challengerOut),
+    // H3 结构门留痕:任一方缺三段即记(只审计不 gate,旧记录缺它即 undefined)。
+    malformedSides: (() => {
+      const b = missingSections(builderOut)
+      const c = missingSections(challengerOut)
+      return b.length === 0 && c.length === 0 ? null : { builder: b, challenger: c }
+    })(),
     // exists 没给(纯函数单测/旧调用) → 不验,记 null(无指针与没验都用 null,都是"无可审计数")。
     pointerAudit: exists ? auditPointers(currCombined, exists) : null,
   }
@@ -888,8 +911,15 @@ export function extractSessionContext(events: SessionEventLike[], maxChars = CON
 
 function isDebateContextNoise(text: string): boolean {
   const t = text.trim()
-  if (/^(?:辩论单|⚔\s*辩论|辩论开题|交锋第|成果地图)/.test(t)) return true
+  // 对话区镜像一律可识别:开局 ⚔ / 开写 ⏳ / 轮次交锋第 / 成果地图 / 收尾 ✅🛑 / 文档 📄 /
+  // 告警 ⚠⚠️ / 加粗标题 **交锋…(onSide 标题带 **,^交锋第 认不出,必须另列)。
+  if (/^(?:辩论单|⚔|⏳|辩论开题|交锋第|成果地图|✅|🛑|📄|⚠|⚠️|\*\*)/.test(t)) return true
   return /^(?:(?:那请)?继续(?:处理|吧)?|好|好的|收到|嗯|明白|了解|确认|ok|okay)(?:[，,、\s]*(?:(?:我)?(?:继续(?:处理|吧)?|处理)|收到|好的?))*[。！!，,\s]*$/i.test(t)
+}
+
+/** 镜像噪声判定(导出:host 的 lastUserText 与此处同源,别各写一份正则)。 */
+export function isMirrorNoise(text: string): boolean {
+  return isDebateContextNoise(text)
 }
 
 /** transcript 条目。role 只有三生产者 + system(裁判已移除,无 'judge' 生产者,不留死取值)。 */
