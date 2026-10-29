@@ -325,7 +325,7 @@ sequenceDiagram
 - [ADR-0020](adr/0020-cap-convergence.md): 压线共识——上限处一致是 convergence 修饰位。
 - [ADR-0021](adr/0021-optional-audit-versioning.md): 可选审计字段不 bump 记录版本。
 - [ADR-0022](adr/0022-tool-cage-allowlist.md): 工具笼改白名单（辩手 6 项、制图员 3 项）。
-- [ADR-0023](adr/0023-session-takeover-b.md): 会话接管 B 方案——忙快照 + 一键双停 + 打断可映射。
+- [ADR-0023](adr/0023-session-takeover-b.md): 双停与可观测 B 方案（原名会话接管）——忙快照 + 一键双停 + 打断可映射。
 - [ADR-0024](adr/0024-single-thread-fork.md): 单线分叉——单模型双角色交替线默认驱动。
 - [ADR-0027](adr/0027-foreground-placeholder.md): 前台占位 turn——唯一阻塞式 hold 工具 + 双向收尾（S28 修订为 hold 例外）。
 - [ADR-0034](adr/0034-oneshot-startactivation.md): one-shot 改走 `startActivation`——宿主 seam

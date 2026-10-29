@@ -7,7 +7,7 @@
     "dsh": ">=0.1.1"
   },
   "contributes": {
-    "tools": [],
+    "tools": ["debate_hold_foreground"],
     "skills": []
   },
   "client": {

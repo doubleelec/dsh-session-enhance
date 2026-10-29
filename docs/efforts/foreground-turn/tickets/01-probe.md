@@ -53,10 +53,8 @@ history / interrupt / start / state / stop / version 取 deliberation 相关）�
 的探针路由；其余 debug-* 是 S5 旧物。task/* 七路由门不受影响（仍是七条，
 `test_src_task_routes_are_seven` 绿）。
 
-探针路由是临时的，不建议现在改 WIRE-01 数字。T1 收尾时二选一：
-(a) 删探针路由，回到 9；(b) 留作常驻可观测，则把 WIRE-01 改成 11 并在
-`test_src_registered_tools_match_manifest` 旁加条数门。别静默留在 9 对
-11——下次巡检还会报。
+探针路由已删（T3 选项 a，2026-10-30）：`debug-followup`/`debug-parent` +
+面板"探针起 turn"按钮随正式占位链路落地而删除，不转正。debug-* 剩 S5 旧物。
 
 ### P1 实测结论：running 中调 followup 只进 inbox，不打断当前 turn（2026-10-29）
 

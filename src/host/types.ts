@@ -16,6 +16,8 @@ export interface ParentAgent {
     /** 会话日志直接追加(对话区直播用:直接进 surface,不经过 inbox,不唤醒模型)。 */
     append?: (type: string, data: unknown, opts?: unknown) => unknown
   }
+  /** 占位拉起用(ADR-0027):idle 起 turn,running 只排队;缺失则占位降级为 mirror+面板。 */
+  followup?: (input: unknown) => void
   [key: string]: unknown
 }
 

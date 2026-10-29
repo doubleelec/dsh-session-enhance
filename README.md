@@ -1,7 +1,7 @@
 # dsh-session-enhance
 
 > DSH native plugin with two functions: deliberate open-ended questions (builder/challenger/synthesizer → argument map) and run cross-repo tasks (scan → build → launch → report/collect).
-> Human-operated plugin: registers no model tools (`contributes.tools` is empty); orders are placed from panel buttons, driven directly by the host in the background.
+> Human-operated plugin: registers exactly one model tool (`debate_hold_foreground`, ADR-0027 foreground placeholder that only waits for the debate settlement); orders are placed from panel buttons, driven directly by the host in the background.
 
 ## Features
 

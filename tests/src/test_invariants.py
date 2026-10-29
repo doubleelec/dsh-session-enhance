@@ -51,13 +51,14 @@ def test_src_synth_tool_allowlist_is_closed():
 
 
 def test_src_registered_tools_match_manifest():
-    """No model tools: host exposes zero tools.register; manifest contributes.tools is empty."""
+    """Single hold tool (ADR-0027): exactly one tools.register (HOLD_TOOL_NAME); manifest carries the same single name."""
     import json
 
     src = _read(SRC_INDEX)
-    assert "tools.register" not in src, "src/index.ts must not register model tools (human-operated plugin)"
+    assert len(re.findall(r"ctx\.tools\?\.register\(|ctx\.tools\.register\(", src)) == 1, "src/index.ts must register exactly one model tool (the hold tool)"
+    assert "HOLD_TOOL_NAME" in src and "defineTool(" in src, "src/index.ts single tools.register must be the hold tool via defineTool"
     manifest = sorted(json.loads(_read(MANIFEST))["contributes"]["tools"])
-    assert manifest == [], f"manifest contributes.tools must be empty, got {manifest}"
+    assert manifest == ["debate_hold_foreground"], f"manifest contributes.tools must be exactly the hold tool, got {manifest}"
 
 
 def test_src_task_routes_are_ten():
@@ -93,4 +94,4 @@ def test_src_peer_symmetry():
         for ts in (src_dir / peer).glob("*.ts"):
             text = ts.read_text(encoding="utf-8")
             assert "webServer.register" not in text, f"{ts} must not register routes"
-            assert "tools.register" not in text, f"{ts} must not register tools"
+            assert "ctx.tools" not in text and ".register(defineTool" not in text, f"{ts} must not register tools"

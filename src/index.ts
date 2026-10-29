@@ -5,7 +5,9 @@
  * 1. webServer JSON 路由 /dsh-session-enhance/api/*:面板建单(start,带 sessionId+hint)后
  *    host 直接以后台任务跑完全程(open→round×N→synthesize),不再经过输入框触发语;
  *    state 轮询取实况,stop 中止。
- * 2. 模型工具:无。人工操作插件,不注册任何模型工具(host 直驱走 subagents 服务)。
+ * 2. 模型工具:唯一阻塞式 hold 工具 debate_hold_foreground(ADR-0027 前台占位)。
+ *    人工操作插件,论证不走模型工具(host 直驱走 subagents 服务);hold 只占住
+ *    发起会话的 turn(调即运行态),除进度外不做论证。
  *
  * v0.3:host 直驱(parent 取自 ctx.agents.get(sessionId),agentOptions 锁定辩手模型)。
  */
@@ -13,6 +15,7 @@ import type { Context } from 'cordis'
 import { rm } from 'node:fs/promises'
 import fs from 'node:fs'
 import path from 'node:path'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 
 import type { DebateConfig, DebateMap, DebateRound, DebateStatus, TranscriptEntry } from './debate/debate'
 import type { AgentsLike, ParentAgent, ResidentAgent, ResidentPair, TextContentBlock, AgentPresetsLike, ResidentSetupCtx, SubagentsLike } from './host/types'
@@ -55,6 +58,48 @@ declare module 'cordis' {
     webServer: {
       register(route: { kind: 'exact' | 'prefix'; path: string; handler: (req: DebateHttpRequest, res: DebateHttpResponse) => void | Promise<void> }): () => void
     }
+    tools?: {
+      register(def: unknown): () => void
+    }
+  }
+}
+
+/**
+ * 前台占位 hold 工具名(ADR-0027):唯一阻塞式模型工具例外(S28 修订)。
+ * 模型在占位 turn 内调它即挂起 = 运行态(蓝字 + 停止按钮);execute 内 await
+ * 辩论 settlement,除进度外不做论证。
+ */
+export const HOLD_TOOL_NAME = 'debate_hold_foreground'
+
+/** hold 是否该返回:辩论不在 running 即结算态(done/failed/stopped 任一)。纯函数,可单测。 */
+export function shouldHoldResolve(status: DebateStatus): boolean {
+  return status !== 'running'
+}
+
+/** hold 返回文案(纯函数,给模型一个可讲的收尾,不灌全文)。 */
+export function holdReturnTextOf(session: { id: string; status: DebateStatus; config?: { auto?: { question?: string } | null } }): string {
+  const q = session.config?.auto?.question
+  const what = q !== undefined && q !== '' ? `「${q}」` : `会话 ${session.id}`
+  if (session.status === 'done') return `辩论已结束${what},结论见对话区收尾与面板成果地图,本占位 turn 收。`
+  if (session.status === 'stopped') return `辩论已中止${what}(用户点了停止/双停),本占位 turn 收。`
+  return `辩论已失败${what},错误见面板 state,本占位 turn 收。`
+}
+
+/** 占位拉起语(host followup 进 parent inbox,模型照做即调 hold 占住 turn)。纯函数,可单测。 */
+export function holdPromptOf(sessionId: string): string {
+  return `辩论已在后台启动(会话 ${sessionId})。请只做一件事:调用 ${HOLD_TOOL_NAME} 工具(sessionId="${sessionId}"),不要输出别的,不要论证。调用挂起期间=前台运行态,辩论结束工具即返回,你再收尾。`
+}
+
+/** 后台 settlement 后收前台占位 turn(无僵尸):cancel 只停 turn,keepInbox 留住用户消息。 */
+export function closePlaceholderTurn(parent: unknown, session: { parentSid: string | null }): { closed: boolean; reason: string | null } {
+  try {
+    if (!session.parentSid) return { closed: false, reason: 'no-parent-sid' }
+    const p = parent as { cancel?: (cause: unknown, opts?: unknown) => void } | null | undefined
+    if (!p || typeof p.cancel !== 'function') return { closed: false, reason: 'no-cancel' }
+    p.cancel({ kind: 'user' }, { keepInbox: true })
+    return { closed: true, reason: null }
+  } catch (e) {
+    return { closed: false, reason: e instanceof Error ? e.message : String(e) }
   }
 }
 
@@ -97,13 +142,13 @@ interface DebateSession {
    */
   cageNote: string | null
   /**
-   * 打断点(S17 会话接管):stop/interrupt 时 transcript 停在哪(round/seq)。
+   * 打断点(S17 双停与可观测,原名会话接管):stop/interrupt 时 transcript 停在哪(round/seq)。
    * transcript 本来就全保留,缺的只是"打断点在哪"这个映射——面板照此画线。
    * 开题前就停了记 null(没东西可指)。可选审计字段,老记录缺即 null(ADR-0021)。
    */
   interruptedAt: { round: number; seq: number } | null
   /**
-   * 发起会话忙快照(S17 会话接管):每轮边界采样一次 parent.status,只记 running/闲。
+   * 发起会话忙快照(S17 双停与可观测,原名会话接管):每轮边界采样一次 parent.status,只记 running/闲。
    * 落盘的是快照不是引用(恢复的局没有活着的 parent,快照只是"那时忙不忙")。
    * 可选审计字段,老记录缺即 false(ADR-0021)。
    */
@@ -852,6 +897,81 @@ export async function sweepSingleThread(
 /** 每场辩论的中止器(stop 路由 abort,后台任务退出)。 */
 const controllers = new Map<string, AbortController>()
 
+/**
+ * 前台占位 hold 等待表(ADR-0027):sessionId → settlement 时 resolve 的回调集合。
+ * hold execute 在这里挂起;runHostDebate 的 try/catch/finally 落定处统一唤醒。
+ * 用户点停 → tool abort 会打断挂起的 execute(宿主行为),execute 侧 abort 后台任务(双停)。
+ */
+const holdWaiters = new Map<string, Set<() => void>>()
+
+/** hold 挂起:session 还在 running 就等 settlement;已落定直接过(纯等待,不做论证)。 */
+export function waitForDebateSettlement(sessionId: string, signal: AbortSignal): Promise<void> {
+  const session = sessions.get(sessionId)
+  if (!session || shouldHoldResolve(session.status)) return Promise.resolve()
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) { reject(new Error('aborted')); return }
+    let set = holdWaiters.get(sessionId)
+    if (!set) { set = new Set(); holdWaiters.set(sessionId, set) }
+    const done = (): void => {
+      signal.removeEventListener('abort', onAbort)
+      set!.delete(done)
+      if (set!.size === 0) holdWaiters.delete(sessionId)
+      resolve()
+    }
+    const onAbort = (): void => {
+      signal.removeEventListener('abort', onAbort)
+      set!.delete(done)
+      if (set!.size === 0) holdWaiters.delete(sessionId)
+      reject(new Error('aborted'))
+    }
+    set.add(done)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/** 唤醒某局的全部 hold 等待者(后台 settlement 处调用,不判状态——落定即唤醒)。 */
+export function notifyHoldSettled(sessionId: string): number {
+  const set = holdWaiters.get(sessionId)
+  if (!set || set.size === 0) return 0
+  const waiters = [...set]
+  holdWaiters.delete(sessionId)
+  for (const w of waiters) { try { w() } catch { /* 唤醒失败不拦收尾 */ } }
+  return waiters.length
+}
+
+/**
+ * hold 工具本体(ADR-0027,注册包装薄转调,单测直测本函数)。
+ * 语义:sessionId 指到的局还在 running 就挂起等 settlement;已落定直接回文案。
+ * exec.signal 必有(宿主 DSL 保证,缺了即接线缺陷):用户点停 → tool abort 打断
+ * 等待 → abort 后台 controllers(双停前半) + 打断标记落盘(interruptMarkOf,
+ * 转交 runHostDebate 收尾),再把 abort 抛回宿主。不做 signal 兜底——兜底的
+ * signal 永不 abort,会把双停链悬空成"前台停了、后台继续跑"的分叉默认态。
+ */
+export async function executeHoldTool(
+  args: unknown,
+  exec: { agent?: unknown; signal: AbortSignal },
+): Promise<string> {
+  const a = (args ?? {}) as { sessionId?: unknown }
+  if (typeof a.sessionId !== 'string' || a.sessionId === '') throw new Error('requires sessionId')
+  if (!exec.signal) throw new Error('hold tool requires exec.signal (host wiring broken)')
+  const session = sessions.get(a.sessionId)
+  if (!session) throw new Error(`unknown debate session: ${a.sessionId}`)
+  if (shouldHoldResolve(session.status)) return holdReturnTextOf(session)
+  const signal = exec.signal
+  try {
+    await waitForDebateSettlement(session.id, signal)
+  } catch (e) {
+    // 前台 turn 被取消 → 后台跟停(双停),打断点落盘;状态机收尾交给 runHostDebate。
+    try { controllers.get(session.id)?.abort() } catch { /* 忽略 */ }
+    if (session.status === 'running') {
+      try { session.interruptedAt = interruptMarkOf(session.transcript, session.round) } catch { /* 标记失败不掩盖 abort */ }
+      try { session.flush?.() } catch { /* 落盘失败只留痕,不掩盖 abort */ }
+    }
+    throw e
+  }
+  return holdReturnTextOf(session)
+}
+
 // ───────────────────────── 跨仓任务(task)辅助(ADR-0025) ─────────────────────────
 // 从 dsh-task-launcher 移植：stamp/created/parentRootOf + taskLaunchControllers。
 // task 路由挂 /dsh-session-enhance/api/task/*,与 deliberation 路由同文件逐条注册。
@@ -1048,6 +1168,18 @@ export async function runHostDebate(
     // 秒级直播:建单→自动判断完成即有进度,不用等第一个模型输出。
     setProgress(session, `已启动:「${auto.question}」(建构 ${session.config.builder.model} vs 挑战 ${session.config.challenger.model},共 ${session.config.maxRounds} 轮)。建构者开写中…`)
     mirror(parent, session, `⚔ 辩论开始:「${auto.question}」(建构 ${session.config.builder.model} vs 挑战 ${session.config.challenger.model},共 ${session.config.maxRounds} 轮,制图 ${session.config.synthesizer.model})。开题马上到,进度同步见面板。`)
+    // 前台占位拉起(ADR-0027):对 parent followup 一条 hold 指令,idle 起 turn,running 只排队。
+    // 模型照做调 hold 即进运行态;自建 parent 没有对话区可看,跳过;拉不起只降级,不拦辩论。
+    try {
+      if (owned === null && typeof parent.followup === 'function') {
+        parent.followup({
+          id: `se-hold-${session.id}`,
+          role: 'user',
+          content: [{ type: 'text', text: holdPromptOf(session.id) }],
+          source: { kind: 'user' },
+        })
+      }
+    } catch { /* 占位拉不起只降级为 mirror+面板,不拦辩论 */ }
     // 开写镜像去重:互盲开题 path 会连调两次同一文案(setProgress 覆盖无感,
     // mirror append 则会连刷两条同样的 ⏳ 行),连续相同只镜一次。
     let lastStartMirrored = ''
@@ -1276,6 +1408,13 @@ export async function runHostDebate(
       mirror(parent, session, `⚠️ 结论文档没能落盘(${session.reportError});完整记录仍在辩论面板里。`)
     }
     await persist(ctx, session)
+    // 前台占位收尾(ADR-0027):先唤醒 hold 等待者拿结算文案自我收尾,再显式
+    // cancel 前台 turn(有等待者也照收——模型不收 turn 就僵尸,宿主 cancel 即
+    // turn-stopping,hold 的 abort 路径正好走双停,不留"前台转、后台停"分叉)。
+    try {
+      notifyHoldSettled(session.id)
+      closePlaceholderTurn(parent, session)
+    } catch { /* 收尾失败不掩盖辩论结果 */ }
     done()
   } catch (err) {
     if (signal.aborted || (err instanceof Error && err.message === 'aborted')) {
@@ -1287,6 +1426,11 @@ export async function runHostDebate(
     }
     // 失败/中止也要落盘:面板重启后还能看到"这局挂在哪",否则只剩一个丢失的 id。
     await persist(ctx, session)
+    // 前台占位收尾(ADR-0027):中止也是 settlement,唤醒 hold(持 turn 者拿 stopped 文案收)后再 cancel 收 turn,不留僵尸。
+    try {
+      notifyHoldSettled(session.id)
+      closePlaceholderTurn(parent, session)
+    } catch { /* 收尾失败不掩盖落盘结果 */ }
     done()
   } finally {
     if (single) {
@@ -1326,7 +1470,7 @@ export async function runHostDebate(
 /** 执行期 guard(S16)。(已迁 host/cage,重导出见顶。) */
 
 /**
- * 打断点(S17 会话接管):transcript 最后一条的位置,面板照此画线,不猜不编。
+ * 打断点(S17 双停与可观测,原名会话接管):transcript 最后一条的位置,面板照此画线,不猜不编。
  * 空实录记 null(开题前就停了,没东西可指)。纯函数,可单测。
  */
 export function interruptMarkOf(
@@ -1339,7 +1483,7 @@ export function interruptMarkOf(
 }
 
 /**
- * 发起会话忙快照(S17 会话接管):只认 parent.status==='running',别的全算闲。
+ * 发起会话忙快照(S17 双停与可观测,原名会话接管):只认 parent.status==='running',别的全算闲。
  * parent 是外部引用不落盘,落盘的是这个快照(state 暴露,面板显示"发起会话忙/闲")。
  * 形状未知(null/缺 status/别的值)一律按闲处理,不误报忙。纯函数,可单测。
  */
@@ -1349,7 +1493,7 @@ export function parentBusyOf(parent: unknown): boolean {
 }
 
 /**
- * 一键双停的执行计划(S17 会话接管):先停 parent turn,后 abort 后台 debate。
+ * 一键双停的执行计划(S17 双停与可观测,原名会话接管):先停 parent turn,后 abort 后台 debate。
  * keepInbox:true 是关键——用户打断时说的那句话要留着,不清空。
  * 纯函数,可单测;IO(调 cancel/abort)在路由里。
  */
@@ -1777,7 +1921,8 @@ export async function runDebateLoop(
 
 export default {
   // tools/subagents/agents/agentPresets 必须声明 inject,否则属性读取抛错(09-24 实测根因)。
-  inject: ['webServer', 'subagents', 'agents', 'agentPresets'],
+  // tools 给唯一 hold 工具(ADR-0027)用:占位 turn 本体,不进 inject 就读不到。
+  inject: ['webServer', 'tools', 'subagents', 'agents', 'agentPresets'],
   apply(ctx: Context) {
     const routes: Array<{ kind: 'exact' | 'prefix'; path: string; handler: (req: DebateHttpRequest, res: DebateHttpResponse) => void | Promise<void> }> = [
       {
@@ -2165,90 +2310,6 @@ export default {
               })
             }
             return writeJson(res, { ok: true, count: list.length, sessions: list })
-          } catch (e) {
-            return writeJson(res, { ok: false, error: e instanceof Error ? e.message : String(e) })
-          }
-        },
-      },
-      {
-        kind: 'exact',
-        path: '/dsh-session-enhance/api/debug-followup',
-        handler: async (req, res) => {
-          // T1 探针 P1(一次性,有副作用):对 parent 真调一次 followup,看发起会话
-          // 是否起 turn。只发一条无害心跳文本,不跑模型任务,随时可停。
-          // body: { sid?, debateId?, text? }。sid 直给发起会话 id;debateId 则从
-          // debate 会话表取 parentSid(面板点按钮用,不用用户找会话 id)。
-          // 返回 followup 前后 status 快照 + 3s 后的 status。
-          // 用户侧观察:发送按钮是否变停止、有无"深度求索中"蓝字。
-          try {
-            const body = await readJsonBody(req)
-            const agents = ctx.get('agents') as {
-              get(id: string): {
-                followup?: (input: unknown) => void
-                whenIdle?: () => Promise<void>
-                status?: unknown
-                session?: { id: string }
-              } | undefined
-              list(): Array<{ session?: { id: string } }>
-            } | undefined
-            if (!agents) return writeJson(res, { ok: false, error: 'agents service unavailable' })
-            const sid = typeof body.sid === 'string' ? body.sid : ''
-            const debateId = typeof body.debateId === 'string' ? body.debateId : ''
-            const fromDebate = debateId !== '' ? sessions.get(debateId)?.parentSid ?? '' : ''
-            const live = agents.list().map((a) => a.session?.id ?? '?')
-            const target = sid !== '' ? sid : fromDebate !== '' ? fromDebate : (live[0] ?? '')
-            if (target === '' || target === '?') return writeJson(res, { ok: true, live, resolved: false })
-            const parent = agents.get(target)
-            if (!parent || typeof parent.followup !== 'function') {
-              return writeJson(res, { ok: true, live, resolved: false, reason: 'no-followup' })
-            }
-            const statusBefore = typeof parent.status === 'string' ? parent.status : String(parent.status)
-            const text = typeof body.text === 'string' && body.text !== ''
-              ? body.text
-              : '【探针】前台占位 turn 测试：这是一条无害心跳，看到请告诉我会话区是否进入运行态。'
-            parent.followup({
-              id: `se-probe-${Date.now().toString(36)}`,
-              role: 'user',
-              content: [{ type: 'text', text }],
-              source: { kind: 'user' },
-            })
-            await new Promise((r) => setTimeout(r, 3000))
-            const statusAfter = typeof parent.status === 'string' ? parent.status : String(parent.status)
-            return writeJson(res, { ok: true, live, resolved: true, sid: target, statusBefore, statusAfter })
-          } catch (e) {
-            return writeJson(res, { ok: false, error: e instanceof Error ? e.message : String(e) })
-          }
-        },
-      },
-      {
-        kind: 'exact',
-        path: '/dsh-session-enhance/api/debug-parent',
-        handler: async (req, res) => {
-          // T1 探针 P0(只读,零副作用):host 如实上报 parent 对象上有哪些可用方法。
-          // 不调用 followup,不起 turn,只枚举能力,决定 P1 是否值得动手。
-          // body: { sid } (发起会话 id;不传则取第一个活体)。
-          try {
-            const body = await readJsonBody(req)
-            const agents = ctx.get('agents') as {
-              get(id: string): Record<string, unknown> | undefined
-              list(): Array<{ session?: { id: string } }>
-            } | undefined
-            if (!agents) return writeJson(res, { ok: false, error: 'agents service unavailable' })
-            const sid = typeof body.sid === 'string' ? body.sid : ''
-            const live = agents.list().map((a) => a.session?.id ?? '?')
-            const target = sid !== '' ? sid : (live[0] ?? '')
-            if (target === '' || target === '?') return writeJson(res, { ok: true, live, resolved: false })
-            const parent = agents.get(target)
-            if (!parent) return writeJson(res, { ok: true, live, resolved: false })
-            const keys = Object.keys(parent).sort()
-            const cap: Record<string, string> = {}
-            for (const k of ['followup', 'cancel', 'whenIdle', 'status', 'dispose', 'session', 'ctx']) {
-              const v = (parent as Record<string, unknown>)[k]
-              cap[k] = typeof v + (typeof v === 'function' ? `(${String(v).slice(0, 80)})` : '')
-            }
-            const sess = (parent as Record<string, unknown>).session as Record<string, unknown> | undefined
-            const sessKeys = sess ? Object.keys(sess).sort() : []
-            return writeJson(res, { ok: true, live, resolved: true, sid: target, keys, cap, sessKeys })
           } catch (e) {
             return writeJson(res, { ok: false, error: e instanceof Error ? e.message : String(e) })
           }
@@ -2735,6 +2796,27 @@ export default {
     // 真实 webServer.register 只接受单个 route(数组会被静默塞进前缀表导致路由失效,见 explorer 经验)
     for (const route of routes) ctx.webServer.register(route)
 
+    // 唯一阻塞式 hold 工具(ADR-0027 前台占位,S28 修订例外):模型在占位 turn 内调它
+    // 即挂起 = 运行态(蓝字 + 停止按钮);execute 内 await 辩论 settlement,不做论证。
+    // 注册形态(宿主唯一 seam:tools 服务 register + defineTool 全 DSL):
+    // parameters 用 DSL 写法({ sessionId: { type:'string', required:true, description } }),
+    // 不能套 JSON Schema 的 { type:'object', properties } 壳(编译器按 DSL 编译,壳被拒);
+    // output.render 必需(缺了 register 抛 TypeError);tools 已进 inject(顶部)。
+    try {
+      ctx.tools?.register(defineTool({
+        name: HOLD_TOOL_NAME,
+        description: '前台占位:辩论在后台跑,本 turn 只等结论。调用即挂起直到辩论结束,不做论证;用户点停即双停。',
+        parameters: {
+          sessionId: { type: 'string', required: true, description: '面板建单返回的 id' },
+        },
+        output: {
+          schema: { type: 'string' },
+          render: (_args, value) => [{ type: 'text', text: String(value) }],
+        },
+        execute: async (args, exec) => executeHoldTool(args, exec),
+      }))
+    } catch { /* 占位工具挂不上只降级为 mirror+面板,不拦路由注册 */ }
+
     // 装载上一进程留下的局(ADR-0019)。后台做,不挡路由注册:
     // 面板在装载完成前轮询旧 id 会拿到一次 unknown-id,那是可接受的过渡态。
     void loadPersisted(ctx)
@@ -2748,6 +2830,6 @@ export default {
       if (unit !== null) void unit.close().catch(() => { /* 关闭失败无补救,进程反正要走了 */ })
     })
 
-    // 模型工具:无。人工操作插件,不注册任何模型工具(host 直驱走 subagents 服务)。
+    // 模型工具:唯一 hold 工具(ADR-0027 前台占位,S28 修订例外)。论证仍不走模型工具(host 直驱 subagents)。
   },
 }

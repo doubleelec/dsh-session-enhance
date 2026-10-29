@@ -41,6 +41,9 @@ const nodeLib: UserConfig = {
   fixedExtension: false,
   dts: false,
   clean: true,
+  // host bundle:宿主进程自带 dsh-tools(tools registry 服务),插件只 import
+  // defineTool 纯编译函数,不打进包(打进去起第二套 registry,体积 +130kB)。
+  external: ['@deepseek-ai/dsh-tools'],
 }
 
 const client: UserConfig = {

@@ -46,7 +46,7 @@ import {
   type DebateRound,
   type TranscriptEntry,
 } from '../../src/debate/debate'
-import { normalizeConfig, extractModelEcho, isRouteIneffective, resolveAuto, settledDefsOf, settledItemsOfSession, stepOpen, stepRound, stepSynthesize, sessions, stepOpenResident, stepRoundResident, stepOpenSingle, stepRoundSingle, buildDebateForkSeed, createSingleThread, recordRoundAndJudge, interruptMarkOf, parentBusyOf, interruptPlanOf } from '../../src/index'
+import { normalizeConfig, extractModelEcho, isRouteIneffective, resolveAuto, settledDefsOf, settledItemsOfSession, stepOpen, stepRound, stepSynthesize, sessions, stepOpenResident, stepRoundResident, stepOpenSingle, stepRoundSingle, buildDebateForkSeed, createSingleThread, recordRoundAndJudge, interruptMarkOf, parentBusyOf, interruptPlanOf, HOLD_TOOL_NAME, shouldHoldResolve, holdReturnTextOf, holdPromptOf, closePlaceholderTurn, waitForDebateSettlement, notifyHoldSettled, executeHoldTool } from '../../src/index'
 import { toolAllowFor, resolveToolAllow, cageLabel, visibleNamesOf, scopedToolGuard, turnVerdict, DEBATER_TOOL_ALLOW, SYNTH_TOOL_ALLOW, STEP_STALL_MS, STEP_HARD_CAP_MS } from '../../src/host/cage'
 import { extractHandoffConclusion, heartbeatOf, epochStopReason, epochStopDetail, isRetriableTurnError, driveResidentTurn, createResidentPair } from '../../src/host/resident'
 import { settledItemsOf } from '../../src/debate/debate'
@@ -1538,7 +1538,7 @@ describe('S16 白名单工具笼', () => {
   })
 })
 
-describe('S17 会话接管·打断标记', () => {
+describe('S17 双停与可观测(原名会话接管)·打断标记', () => {
   const tr = (seq: number, role: 'builder' | 'challenger', round: number): TranscriptEntry => ({ seq, role, round, text: 't' })
   it('interruptMarkOf:空实录记 null,有实录记末条位置', () => {
     // 打断点 = transcript 最后一条的位置,面板照此画线,不猜不编。
@@ -1557,5 +1557,83 @@ describe('S17 会话接管·打断标记', () => {
   it('interruptPlanOf:一键双停的执行计划(先停 parent turn,后 abort 后台)', () => {
     // keepInbox:true 是关键——用户打断时说的那句话要留着,不清空。
     expect(interruptPlanOf('sid-1')).toEqual({ cancelKind: 'user', keepInbox: true })
+  })
+})
+
+describe('ADR-0027 前台占位 hold', () => {
+  it('HOLD_TOOL_NAME 唯一名:面板/manifest/门禁同源', () => {
+    expect(HOLD_TOOL_NAME).toBe('debate_hold_foreground')
+  })
+  it('shouldHoldResolve:running 才挂起,结算态即返回', () => {
+    expect(shouldHoldResolve('running')).toBe(false)
+    expect(shouldHoldResolve('done')).toBe(true)
+    expect(shouldHoldResolve('stopped')).toBe(true)
+    expect(shouldHoldResolve('failed')).toBe(true)
+  })
+  it('holdReturnTextOf:三种结算态文案可讲,不灌全文', () => {
+    expect(holdReturnTextOf({ id: 'se-1', status: 'done', config: { auto: { question: '上 K8s?' } } })).toContain('已结束')
+    expect(holdReturnTextOf({ id: 'se-1', status: 'stopped' })).toContain('已中止')
+    expect(holdReturnTextOf({ id: 'se-1', status: 'failed' })).toContain('已失败')
+  })
+  it('holdPromptOf:拉起语点名 hold 工具 + sessionId', () => {
+    expect(holdPromptOf('se-9')).toContain(HOLD_TOOL_NAME)
+    expect(holdPromptOf('se-9')).toContain('se-9')
+  })
+  it('closePlaceholderTurn:cancel 只停 turn,keepInbox 留消息;无 parent 不炸', () => {
+    const calls: unknown[][] = []
+    const parent = { cancel: (...a: unknown[]) => { calls.push(a) } }
+    expect(closePlaceholderTurn(parent, { parentSid: 'p1' })).toEqual({ closed: true, reason: null })
+    expect(calls).toEqual([[{ kind: 'user' }, { keepInbox: true }]])
+    expect(closePlaceholderTurn(parent, { parentSid: null })).toEqual({ closed: false, reason: 'no-parent-sid' })
+    expect(closePlaceholderTurn(null, { parentSid: 'p1' })).toEqual({ closed: false, reason: 'no-cancel' })
+  })
+  it('waitFor/notify:running 挂起,settlement 唤醒;已落定直接过', async () => {
+    const r = normalizeConfig({ maxRounds: 2 })
+    if (!('config' in r)) throw new Error('bad config')
+    const s: { id: string; config: typeof r.config; status: 'running' | 'done' | 'failed' | 'stopped'; round: number;
+      transcript: TranscriptEntry[]; map: null; mapText: null; error: null; mirrorToChat: boolean;
+      progress: string; mirrorCount: number; mirrorError: null; parentSid: null; stopReason: null; rounds: DebateRound[];
+      mode: 'oneShot'; residentError: null; cageNote: null; interruptedAt: null; parentBusy: null; streaming: Record<string, never>; decisionSummary: null;
+      reportRel: null; persistError: null; reportError: null; sweepError: null; sweptSessions: never[]; restored: boolean;
+      createdAt: number; updatedAt: number } = {
+      id: 'hold-ut', config: r.config, status: 'running', round: -1,
+      transcript: [] as TranscriptEntry[], map: null, mapText: null, error: null, mirrorToChat: false,
+      progress: '', mirrorCount: 0, mirrorError: null, parentSid: null, stopReason: null, rounds: [] as DebateRound[],
+      mode: 'oneShot' as const, residentError: null, cageNote: null, interruptedAt: null, parentBusy: null, streaming: {}, decisionSummary: null,
+      reportRel: null, persistError: null, reportError: null, sweepError: null, sweptSessions: [], restored: false,
+      createdAt: 0, updatedAt: 0,
+    }
+    sessions.set(s.id, s)
+    try {
+      const ctl = new AbortController()
+      const p = waitForDebateSettlement(s.id, ctl.signal)
+      expect(notifyHoldSettled(s.id)).toBe(1)
+      await p
+      s.status = 'done' as const
+      await waitForDebateSettlement(s.id, new AbortController().signal)
+    } finally {
+      sessions.delete(s.id)
+    }
+  })
+  it('executeHoldTool:已落定直接回文案;未知局/缺参抛错不挂起', async () => {
+    const r = normalizeConfig({ maxRounds: 2 })
+    if (!('config' in r)) throw new Error('bad config')
+    const s = {
+      id: 'hold-ut2', config: r.config, status: 'done' as const, round: 1,
+      transcript: [] as TranscriptEntry[], map: null, mapText: null, error: null, mirrorToChat: false,
+      progress: '', mirrorCount: 0, mirrorError: null, parentSid: null, stopReason: null, rounds: [] as DebateRound[],
+      mode: 'oneShot' as const, residentError: null, cageNote: null, interruptedAt: null, parentBusy: null, streaming: {}, decisionSummary: null,
+      reportRel: null, persistError: null, reportError: null, sweepError: null, sweptSessions: [], restored: false,
+      createdAt: 0, updatedAt: 0,
+    }
+    sessions.set(s.id, s)
+    try {
+      const text = await executeHoldTool({ sessionId: s.id }, { signal: new AbortController().signal })
+      expect(text).toContain('已结束')
+      await expect(executeHoldTool({}, { signal: new AbortController().signal })).rejects.toThrow('requires sessionId')
+      await expect(executeHoldTool({ sessionId: 'no-such' }, { signal: new AbortController().signal })).rejects.toThrow('unknown debate session')
+    } finally {
+      sessions.delete(s.id)
+    }
   })
 })

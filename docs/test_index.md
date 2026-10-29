@@ -42,7 +42,7 @@ One row per test function in each `tests/<module>/test_invariants.py`. Placehold
 | `test_invariants.py::test_src_single_thread_seam_exists` | src single-thread fork seam (ADR-0024) | a seam symbol (create/step/sweep) disappears from host |
 | `test_invariants.py::test_src_debater_tool_allowlist_is_closed` | src debater allowlist closed at six tools (ADR-0022) | the allowlist gains/loses an entry |
 | `test_invariants.py::test_src_synth_tool_allowlist_is_closed` | src synth allowlist closed at three tools (ADR-0022) | the allowlist gains/loses an entry |
-| `test_invariants.py::test_src_registered_tools_match_manifest` | src registers no model tools, manifest tools empty (human-operated plugin) | a tools.register returns or manifest tools non-empty |
+| `test_invariants.py::test_src_registered_tools_match_manifest` | src registers exactly the hold tool, manifest carries the same single name (ADR-0027) | tools.register count/name drifts or manifest tools mismatch |
 | `test_invariants.py::test_src_task_routes_are_ten` | src task wiring keeps ten routes (0025 + 0028 recommend + 0030 log + 0031 models) | a task route is added/removed/renamed |
 | `test_invariants.py::test_src_peer_symmetry` | src debate/ vs task/ peer symmetry (S22, S27: host/ joins) | a peer dir loses module.toml, flat leftovers return, or wiring leaks into peers |
 | `test_invariants.py::test_client_pure_surface_exists` | src/client pure modules keep entry points | an exported pure function disappears |

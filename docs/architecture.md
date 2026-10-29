@@ -21,7 +21,7 @@
 - **Functions**: 两个入口、两套 host 接线、一套面板外壳——
   - **辩论**：为开放性论证题跑建构 / 挑战 / 制图三角色，产出一套固定五件套成果地图，而非单一结论句。详述见 `docs/architecture-debate.md`。
   - **跨仓任务**：扫一父目录下多仓结构（scan）→ AI 按任务描述推荐涉及仓、人审核勾选（recommend，ADR-0028；失败透出诊断，ADR-0029）→ 建任务材料目录（build，人审改 issued）→ 一仓一会话拉起执行（launch）→ 回信汇总（report/collect），见 ADR-0025/ADR-0028/ADR-0029。详述见 `docs/architecture-cross-tasks.md`。
-- **Scope**: `src/` 下的 host 半区（webServer 路由 + 辩论循环与跨仓任务接线，不注册模型工具）与浏览器 bundle（overlay 对话框 + 输入框入口 + 双面板）。测试单列 `tests/`（§7：vitest 行为门 + pytest 治理门，两扇门一处放）；部署与发包在圈外（见 spec Out of Scope）。
+- **Scope**: `src/` 下的 host 半区（webServer 路由 + 辩论循环与跨仓任务接线 + 唯一前台占位 hold 工具 `debate_hold_foreground`，ADR-0027 对 S28 零工具的例外，论证仍不走模型工具）与浏览器 bundle（overlay 对话框 + 输入框入口 + 双面板）。测试单列 `tests/`（§7：vitest 行为门 + pytest 治理门，两扇门一处放）；部署与发包在圈外（见 spec Out of Scope）。
 - **Two functions, one seam**: 辩论（`src/debate/` 纯模块 + `src/index.ts` 内 deliberation 接线）与多仓任务（`src/cross_tasks/` 纯模块 + `src/index.ts` 内 task 接线）是**平级对等目录**（S22 对称，各管各的纯逻辑；`src/version.ts` 共享）。接线层平台强制同文件（tsdown entry 单 `src/index.ts`、路由表在 `apply()` 逐条注册）。S27 摘出 host 内聚两件（不碰路由表）：工具笼 → `src/host/cage.ts`，常驻辩手对 → `src/host/resident.ts`；`index.ts` 只留路由表 + 重导出（兼容旧 import 面），tests 直连 `src/host/*`。
 
 ## 2. Stakeholders and Concerns
@@ -198,7 +198,7 @@ flowchart TD
 - [ADR-0020](adr/0020-cap-convergence.md): 压线共识——上限处一致是 convergence 的修饰位（`convergedAtCap`），只改说法不改停机；镜像/兜底收尾/面板审计三处标"压线"并给加轮复验建议。
 - [ADR-0021](adr/0021-optional-audit-versioning.md): 可选审计字段不 bump 记录版本——只有不兼容变更才 +1；`pointerAudit` 为判例（`?` 可选 + 缺即 unknown + 只审计不 gate）。
 - [ADR-0022](adr/0022-tool-cage-allowlist.md): 工具笼改白名单——deny 黑名单 fail-open（新工具默认放行），allow 白名单 fail-closed；辩手 6 项、制图员 3 项；启动交集核对（失效剔除、空集失败）、scope-local 走执行期 guard、生效笼型进已启动行 + 落盘（可选审计字段）。
-- [ADR-0023](adr/0023-session-takeover-b.md): 会话接管 B 方案——忙快照 + 一键双停 + 打断可映射（旧局落盘/新局可见/面板画线）。
+- [ADR-0023](adr/0023-session-takeover-b.md): 双停与可观测 B 方案（原名会话接管）——忙快照 + 一键双停 + 打断可映射（旧局落盘/新局可见/面板画线）。
 - [ADR-0024](adr/0024-single-thread-fork.md): 单线分叉——单模型双角色交替线（互盲拿掉：挑战者能看到建构原文逐条反驳；载体用分叉保主会话零污染；种子照抄原生 fork；防呆 `isRouteIneffective` 豁免单线）。
 - [ADR-0025](adr/0025-task-merge.md): 增强入口与跨仓任务并入——输入框按钮改"✦ 增强"弹菜单（辩论/多仓任务），原生发送键不借用（`inputActions` 全仓只有 `setDraft`）；task 三纯模块并入 `src/cross_tasks/`（S23 由 `src/task/` 改名，原型废弃后腾名），路由挂 `/dsh-session-enhance/api/task/*` 8 条，模型工具零个（人工操作插件，面板 HTTP 路由驱动），launch 三道门 + issued 门照抄 launcher。
 - [ADR-0026](adr/0026-task-autofill-preview.md): 任务面板打开即扫 + 预览即确认门——父目录默认只用当前会话 cwd（偏好旧值忽略防串台），repo 全勾/牵头首个/slug 自拟自动回填（⚠️ 回填部分已被 ADR-0028 作废：scan 只展示，涉及仓由推荐定）；"扫描结构"按钮改为"重新扫描"；build 成功直接进预览（逐仓"仓→cwd→provider/model"），确认才 launch（确认即签发带 `skipIssuedCheck`，issued 门只拦外部直调）。
