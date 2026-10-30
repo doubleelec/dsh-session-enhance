@@ -245,19 +245,21 @@ async function pointerExistsFn(cwd: string | undefined): Promise<((p: string) =>
   }
 }
 
-/** 插件直播身份(dsh-llm MessageSourceMap 正式成员):source.kind 只能是 plugin,不能冒充 user。 */
-export const MIRROR_SOURCE_PLUGIN = 'dsh-session-enhance' as const
+/** 插件直播身份(v4 要求生产者自己的 kind:裸 `plugin` 是已退役包装语法,会被拒收)。
+ * 未登记的老三方插件名按 `plugin:<名>` 原样保留(见 dsh-session-format-v3-to-v4 producerKind),
+ * `plugin` 字段去掉,不再走 { kind:'plugin', plugin } 旧包装。 */
+export const MIRROR_SOURCE_KIND = 'plugin:dsh-session-enhance' as const
 /** notice 摘要上限(dsh-llm CONTEXT_SUMMARY_MAX_CHARS,120 字)。 */
 export const MIRROR_SUMMARY_MAX = 120 as const
 
 /**
- * 镜像消息 source 构造(纯函数,单测锁身份:plugin notice,不冒充用户说话)。
+ * 镜像消息 source 构造(纯函数,单测锁身份:plugin:dsh-session-enhance notice,不冒充用户说话)。
  * summary 取首行、超限截断(notice 要求一行说明)。
  */
-export function mirrorSourceOf(text: string): { kind: 'plugin'; plugin: typeof MIRROR_SOURCE_PLUGIN; form: 'notice'; summary: string } {
+export function mirrorSourceOf(text: string): { kind: typeof MIRROR_SOURCE_KIND; form: 'notice'; summary: string } {
   const firstLine = text.split('\n')[0] ?? ''
   const summary = firstLine.length > MIRROR_SUMMARY_MAX ? `${firstLine.slice(0, MIRROR_SUMMARY_MAX - 1)}…` : firstLine
-  return { kind: 'plugin', plugin: MIRROR_SOURCE_PLUGIN, form: 'notice', summary }
+  return { kind: MIRROR_SOURCE_KIND, form: 'notice', summary }
 }
 
 /**
@@ -265,9 +267,11 @@ export function mirrorSourceOf(text: string): { kind: 'plugin'; plugin: typeof M
  * 直接 session.append('user/message', …, { surfaceOp: 'append' }):
  * 对话区即时可见,但只是日志追加,不进 inbox、不开 turn、不唤醒模型——纯直播,不干扰。
  * assistant/message 在空闲会话里写不进去(invariant 要求 open turn/step),所以用 user/message。
- * 身份必须是 plugin notice(dsh-llm MessageSourceMap 正式成员),不能冒充 kind:'user':
+ * 身份必须是 plugin:dsh-session-enhance notice(v4 生产者自己的 kind),不能冒充 kind:'user':
  * role 层只有 user/assistant 两种,但 GUI 按 source.kind 区分渲染——kind:'user' 会被当成
- * 用户自己说的话(2026-10-30 实测:进度行顶着用户身份出现)。notice 另带 summary(≤120 字),
+ * 用户自己说的话(2026-10-30 实测:进度行顶着用户身份出现)。裸 kind:'plugin' 是 v3 已退役
+ * 包装语法,v4 校验直接拒收(同日实测:format v4 message requires a producer-owned source
+ * kind)——所以用 `plugin:<名>` 自有 kind + form:'notice'。notice 另带 summary(≤120 字),
  * "一行说明,不用展开整行",正好是直播行的样子。
  * 文本带 ⚔ 辩论 前缀,问题提取时会被过滤,不污染后续提问。
  * 成功/失败都记数,不静默(面板可观测 mirrorCount/mirrorError)。

@@ -46,7 +46,7 @@ import {
   type DebateRound,
   type TranscriptEntry,
 } from '../../src/debate/debate'
-import { normalizeConfig, extractModelEcho, isRouteIneffective, resolveAuto, settledDefsOf, settledItemsOfSession, stepOpen, stepRound, stepSynthesize, sessions, __testControllers, stepOpenResident, stepRoundResident, stepOpenSingle, stepRoundSingle, buildDebateForkSeed, createSingleThread, recordRoundAndJudge, interruptMarkOf, parentBusyOf, interruptPlanOf, interruptParentErrorOf, HOLD_TOOL_NAME, shouldHoldResolve, holdReturnTextOf, holdPromptOf, closePlaceholderTurn, waitForDebateSettlement, notifyHoldSettled, executeHoldTool, mirrorSourceOf, MIRROR_SOURCE_PLUGIN, MIRROR_SUMMARY_MAX } from '../../src/index'
+import { normalizeConfig, extractModelEcho, isRouteIneffective, resolveAuto, settledDefsOf, settledItemsOfSession, stepOpen, stepRound, stepSynthesize, sessions, __testControllers, stepOpenResident, stepRoundResident, stepOpenSingle, stepRoundSingle, buildDebateForkSeed, createSingleThread, recordRoundAndJudge, interruptMarkOf, parentBusyOf, interruptPlanOf, interruptParentErrorOf, HOLD_TOOL_NAME, shouldHoldResolve, holdReturnTextOf, holdPromptOf, closePlaceholderTurn, waitForDebateSettlement, notifyHoldSettled, executeHoldTool, mirrorSourceOf, MIRROR_SOURCE_KIND, MIRROR_SUMMARY_MAX } from '../../src/index'
 import { toolAllowFor, resolveToolAllow, cageLabel, visibleNamesOf, scopedToolGuard, turnVerdict, DEBATER_TOOL_ALLOW, SYNTH_TOOL_ALLOW, STEP_STALL_MS, STEP_HARD_CAP_MS } from '../../src/host/cage'
 import { extractHandoffConclusion, heartbeatOf, epochStopReason, epochStopDetail, isRetriableTurnError, driveResidentTurn, createResidentPair } from '../../src/host/resident'
 import { settledItemsOf } from '../../src/debate/debate'
@@ -1593,12 +1593,14 @@ describe('ADR-0027 前台占位 hold', () => {
     expect(p).toContain('se-9')
     expect(p).not.toContain('"se-9"')
   })
-  it('mirrorSourceOf:plugin notice 身份,不冒充用户;summary 取首行超限截断', () => {
-    expect(MIRROR_SOURCE_PLUGIN).toBe('dsh-session-enhance')
+  it('mirrorSourceOf:plugin 自有 kind notice,不冒充用户;summary 取首行超限截断', () => {
+    expect(MIRROR_SOURCE_KIND).toBe('plugin:dsh-session-enhance')
     expect(MIRROR_SUMMARY_MAX).toBe(120)
     const s1 = mirrorSourceOf('⏳ 建构者开写中(单线)…')
-    expect(s1).toEqual({ kind: 'plugin', plugin: 'dsh-session-enhance', form: 'notice', summary: '⏳ 建构者开写中(单线)…' })
+    expect(s1).toEqual({ kind: 'plugin:dsh-session-enhance', form: 'notice', summary: '⏳ 建构者开写中(单线)…' })
     expect(s1.kind).not.toBe('user')
+    // v4 拒收裸 plugin 包装:kind 里不再带 plugin 字段。
+    expect('plugin' in s1).toBe(false)
     const long = `${'x'.repeat(200)}\n第二行`
     const s2 = mirrorSourceOf(long)
     expect(s2.summary.length).toBeLessThanOrEqual(120)
