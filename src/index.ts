@@ -1163,7 +1163,7 @@ export async function runHostDebate(
         throw new Error(`no-live-agent:自建 parent 失败(${e instanceof Error ? e.message : String(e)}),先在 3090 打开一个会话再重试`)
       }
     }
-    if (!parent || !parent.session) throw new Error('no-live-agent:面板没拿到当前会话 id,换个有输入框的会话重试')
+    if (!parent || !parent.session) throw new Error('no-live-agent:面板没拿到当前会话 id,先在 3080 打开一个会话再重试')
     // 真实会话(parent 来自 agents.get/兜底活体)才镜像进度到对话区;自建 parent 没有对话区可写。
     session.mirrorToChat = owned === null
     session.parentSid = owned === null ? (parent.session.id as string) : null
