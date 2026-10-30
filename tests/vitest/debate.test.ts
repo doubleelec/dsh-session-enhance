@@ -1579,13 +1579,15 @@ describe('ADR-0027 前台占位 hold', () => {
     expect(holdPromptOf('se-9')).toContain(HOLD_TOOL_NAME)
     expect(holdPromptOf('se-9')).toContain('se-9')
   })
-  it('closePlaceholderTurn:cancel 只停 turn,keepInbox 留消息;无 parent 不炸', () => {
+  it('closePlaceholderTurn:cancel 只停 turn,keepInbox 留消息;无 parent 不炸;没拉起不收', () => {
     const calls: unknown[][] = []
     const parent = { cancel: (...a: unknown[]) => { calls.push(a) } }
     expect(closePlaceholderTurn(parent, { parentSid: 'p1' })).toEqual({ closed: true, reason: null })
     expect(calls).toEqual([[{ kind: 'user' }, { keepInbox: true }]])
     expect(closePlaceholderTurn(parent, { parentSid: null })).toEqual({ closed: false, reason: 'no-parent-sid' })
     expect(closePlaceholderTurn(null, { parentSid: 'p1' })).toEqual({ closed: false, reason: 'no-cancel' })
+    expect(closePlaceholderTurn(parent, { parentSid: 'p1', placeholderRaised: false })).toEqual({ closed: false, reason: 'never-raised' })
+    expect(calls).toEqual([[{ kind: 'user' }, { keepInbox: true }]])
   })
   it('waitFor/notify:running 挂起,settlement 唤醒;已落定直接过', async () => {
     const r = normalizeConfig({ maxRounds: 2 })

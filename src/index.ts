@@ -90,9 +90,13 @@ export function holdPromptOf(sessionId: string): string {
   return `辩论已在后台启动(会话 ${sessionId})。请只做一件事:调用 ${HOLD_TOOL_NAME} 工具(sessionId="${sessionId}"),不要输出别的,不要论证。调用挂起期间=前台运行态,辩论结束工具即返回,你再收尾。`
 }
 
-/** 后台 settlement 后收前台占位 turn(无僵尸):cancel 只停 turn,keepInbox 留住用户消息。 */
-export function closePlaceholderTurn(parent: unknown, session: { parentSid: string | null }): { closed: boolean; reason: string | null } {
+/** 后台 settlement 后收前台占位 turn(无僵尸):cancel 只停 turn,keepInbox 留住用户消息。
+ * 没拉起过占位(placeholderRaised=false)的局直接跳过:对没起过 turn 的 parent
+ * 调 cancel 语义是空操作,但"没拉起就不收"更干净,也不污染 mirror/审计。
+ */
+export function closePlaceholderTurn(parent: unknown, session: { parentSid: string | null; placeholderRaised?: boolean }): { closed: boolean; reason: string | null } {
   try {
+    if (session.placeholderRaised === false) return { closed: false, reason: 'never-raised' }
     if (!session.parentSid) return { closed: false, reason: 'no-parent-sid' }
     const p = parent as { cancel?: (cause: unknown, opts?: unknown) => void } | null | undefined
     if (!p || typeof p.cancel !== 'function') return { closed: false, reason: 'no-cancel' }
@@ -185,6 +189,12 @@ interface DebateSession {
    * 可选:纯函数单测环境没有它,所以缺了也必须一切照常。
    */
   flush?: () => void
+  /**
+   * 前台占位是否已拉起(ADR-0027):start 后 followup 成功即 true;自建 parent 跳过
+   * 或拉起失败即 false,收尾 closePlaceholderTurn 直接跳过 cancel(没起过 turn 不用收)。
+   * 可选审计字段,老记录缺即 undefined(按已拉起处理,保持旧行为)。
+   */
+  placeholderRaised?: boolean
 }
 
 /**
@@ -528,6 +538,7 @@ async function loadPersisted(ctx: Context): Promise<number> {
         cageNote: fixed.cageNote ?? null,
         interruptedAt: fixed.interruptedAt ?? null,
         parentBusy: fixed.parentBusy ?? null,
+        placeholderRaised: fixed.placeholderRaised,
         streaming: {},
         decisionSummary: fixed.decisionSummary,
         reportRel: fixed.reportRel,
@@ -1171,6 +1182,7 @@ export async function runHostDebate(
     // 前台占位拉起(ADR-0027):对 parent followup 一条 hold 指令,idle 起 turn,running 只排队。
     // 模型照做调 hold 即进运行态;自建 parent 没有对话区可看,跳过;拉不起只降级,不拦辩论。
     // 跳过/失败都记 progress:面板能回答"为什么这局没起 turn",不用猜。
+    // placeholderRaised 给收尾用:没拉起的局 closePlaceholderTurn 直接跳过 cancel。
     try {
       if (owned === null && typeof parent.followup === 'function') {
         parent.followup({
@@ -1179,10 +1191,13 @@ export async function runHostDebate(
           content: [{ type: 'text', text: holdPromptOf(session.id) }],
           source: { kind: 'user' },
         })
+        session.placeholderRaised = true
       } else {
+        session.placeholderRaised = false
         setProgress(session, `${session.progress}（前台占位未拉起:${owned !== null ? '自建 parent 无对话区' : 'parent 无 followup'}，进度走面板+对话区直播）`)
       }
     } catch (e) {
+      session.placeholderRaised = false
       setProgress(session, `${session.progress}（前台占位拉起失败:${e instanceof Error ? e.message : String(e)}，进度走面板+对话区直播）`)
     }
     // 开写镜像去重:互盲开题 path 会连调两次同一文案(setProgress 覆盖无感,
@@ -2037,6 +2052,7 @@ export default {
             mirrorCount: session.mirrorCount,
             mirrorError: session.mirrorError,
             parentSid: session.parentSid,
+            placeholderRaised: session.placeholderRaised ?? undefined,
             stopReason: session.stopReason,
             rounds: session.rounds,
             mode: session.mode,

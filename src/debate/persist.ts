@@ -81,6 +81,8 @@ export interface SessionRecord {
   interruptedAt?: { round: number; seq: number } | null
   /** 发起会话忙快照(S17,可选审计字段:老记录缺它即按 false 恢复,不 bump 版本,见 ADR-0021)。 */
   parentBusy?: boolean | null
+  /** 前台占位是否已拉起(ADR-0027,可选审计字段:老记录缺它即按 undefined 恢复=按已拉起处理)。 */
+  placeholderRaised?: boolean
 }
 
 /** `toRecord` 的入参面:内存会话只要形状对得上即可(结构子类型,不比 index.ts 的私有接口耦合)。 */
@@ -115,6 +117,7 @@ export function toRecord(s: PersistableSession): SessionRecord {
     cageNote: s.cageNote ?? null,
     interruptedAt: s.interruptedAt ?? null,
     parentBusy: s.parentBusy ?? null,
+    placeholderRaised: (s as { placeholderRaised?: boolean }).placeholderRaised ?? undefined,
     sweepError: (s as { sweepError?: string | null }).sweepError ?? null,
     sweptSessions: Array.isArray((s as { sweptSessions?: unknown }).sweptSessions)
       ? (s as { sweptSessions: string[] }).sweptSessions
@@ -170,6 +173,7 @@ export function fromRecord(raw: unknown): SessionRecord | null {
       ? { round: raw.interruptedAt.round as number, seq: raw.interruptedAt.seq as number }
       : null,
     parentBusy: raw.parentBusy === true ? true : raw.parentBusy === false ? false : null,
+    placeholderRaised: raw.placeholderRaised === false ? false : raw.placeholderRaised === true ? true : undefined,
     sweepError: typeof raw.sweepError === 'string' ? raw.sweepError : null,
     sweptSessions: arr<string>(raw.sweptSessions),
   }

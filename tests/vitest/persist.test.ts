@@ -97,6 +97,16 @@ describe('记录白名单(toRecord)', () => {
     delete old.parentBusy
     expect(fromRecord(old)?.parentBusy).toBe(null)
   })
+
+  it('ADR-0027 占位拉起位往返:toRecord 带 placeholderRaised,老记录缺它按 undefined 恢复(不 bump 版本)', () => {
+    // undefined=老记录(按已拉起处理,保持旧收尾行为);false=没拉起,收尾跳过 cancel。
+    const rec = toRecord(mkSession({ placeholderRaised: false }))
+    expect(rec.placeholderRaised).toBe(false)
+    expect(fromRecord(rec)?.placeholderRaised).toBe(false)
+    const old = { ...rec } as Record<string, unknown>
+    delete old.placeholderRaised
+    expect(fromRecord(old)?.placeholderRaised).toBe(undefined)
+  })
 })
 
 describe('记录往返(toRecord → fromRecord)', () => {

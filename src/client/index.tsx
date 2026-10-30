@@ -216,6 +216,8 @@ interface StateResp {
   mirrorCount?: number
   mirrorError?: string | null
   parentSid?: string | null
+  /** 前台占位是否已拉起(ADR-0027):false=自建 parent/拉起失败,进度走面板+直播,收尾不 cancel。 */
+  placeholderRaised?: boolean
   stopReason?: string | null
   rounds?: RoundAudit[]
   mode?: string
