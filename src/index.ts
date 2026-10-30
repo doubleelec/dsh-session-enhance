@@ -1170,6 +1170,7 @@ export async function runHostDebate(
     mirror(parent, session, `⚔ 辩论开始:「${auto.question}」(建构 ${session.config.builder.model} vs 挑战 ${session.config.challenger.model},共 ${session.config.maxRounds} 轮,制图 ${session.config.synthesizer.model})。开题马上到,进度同步见面板。`)
     // 前台占位拉起(ADR-0027):对 parent followup 一条 hold 指令,idle 起 turn,running 只排队。
     // 模型照做调 hold 即进运行态;自建 parent 没有对话区可看,跳过;拉不起只降级,不拦辩论。
+    // 跳过/失败都记 progress:面板能回答"为什么这局没起 turn",不用猜。
     try {
       if (owned === null && typeof parent.followup === 'function') {
         parent.followup({
@@ -1178,8 +1179,12 @@ export async function runHostDebate(
           content: [{ type: 'text', text: holdPromptOf(session.id) }],
           source: { kind: 'user' },
         })
+      } else {
+        setProgress(session, `${session.progress}（前台占位未拉起:${owned !== null ? '自建 parent 无对话区' : 'parent 无 followup'}，进度走面板+对话区直播）`)
       }
-    } catch { /* 占位拉不起只降级为 mirror+面板,不拦辩论 */ }
+    } catch (e) {
+      setProgress(session, `${session.progress}（前台占位拉起失败:${e instanceof Error ? e.message : String(e)}，进度走面板+对话区直播）`)
+    }
     // 开写镜像去重:互盲开题 path 会连调两次同一文案(setProgress 覆盖无感,
     // mirror append 则会连刷两条同样的 ⏳ 行),连续相同只镜一次。
     let lastStartMirrored = ''
