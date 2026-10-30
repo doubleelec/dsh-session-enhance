@@ -1636,4 +1636,25 @@ describe('ADR-0027 前台占位 hold', () => {
       sessions.delete(s.id)
     }
   })
+  it('executeHoldTool:running 挂起可被 abort 打断(双停:后台 controllers 跟停)', async () => {
+    const r = normalizeConfig({ maxRounds: 2 })
+    if (!('config' in r)) throw new Error('bad config')
+    const s = {
+      id: 'hold-ut3', config: r.config, status: 'running' as const, round: 1,
+      transcript: [] as TranscriptEntry[], map: null, mapText: null, error: null, mirrorToChat: false,
+      progress: '', mirrorCount: 0, mirrorError: null, parentSid: null, stopReason: null, rounds: [] as DebateRound[],
+      mode: 'oneShot' as const, residentError: null, cageNote: null, interruptedAt: null, parentBusy: null, streaming: {}, decisionSummary: null,
+      reportRel: null, persistError: null, reportError: null, sweepError: null, sweptSessions: [], restored: false,
+      createdAt: 0, updatedAt: 0,
+    }
+    sessions.set(s.id, s)
+    try {
+      const ctl = new AbortController()
+      const p = executeHoldTool({ sessionId: s.id }, { signal: ctl.signal })
+      ctl.abort()
+      await expect(p).rejects.toThrow('aborted')
+    } finally {
+      sessions.delete(s.id)
+    }
+  })
 })
