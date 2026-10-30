@@ -46,7 +46,7 @@ import {
   type DebateRound,
   type TranscriptEntry,
 } from '../../src/debate/debate'
-import { normalizeConfig, extractModelEcho, isRouteIneffective, resolveAuto, settledDefsOf, settledItemsOfSession, stepOpen, stepRound, stepSynthesize, sessions, stepOpenResident, stepRoundResident, stepOpenSingle, stepRoundSingle, buildDebateForkSeed, createSingleThread, recordRoundAndJudge, interruptMarkOf, parentBusyOf, interruptPlanOf, interruptParentErrorOf, HOLD_TOOL_NAME, shouldHoldResolve, holdReturnTextOf, holdPromptOf, closePlaceholderTurn, waitForDebateSettlement, notifyHoldSettled, executeHoldTool } from '../../src/index'
+import { normalizeConfig, extractModelEcho, isRouteIneffective, resolveAuto, settledDefsOf, settledItemsOfSession, stepOpen, stepRound, stepSynthesize, sessions, __testControllers, stepOpenResident, stepRoundResident, stepOpenSingle, stepRoundSingle, buildDebateForkSeed, createSingleThread, recordRoundAndJudge, interruptMarkOf, parentBusyOf, interruptPlanOf, interruptParentErrorOf, HOLD_TOOL_NAME, shouldHoldResolve, holdReturnTextOf, holdPromptOf, closePlaceholderTurn, waitForDebateSettlement, notifyHoldSettled, executeHoldTool } from '../../src/index'
 import { toolAllowFor, resolveToolAllow, cageLabel, visibleNamesOf, scopedToolGuard, turnVerdict, DEBATER_TOOL_ALLOW, SYNTH_TOOL_ALLOW, STEP_STALL_MS, STEP_HARD_CAP_MS } from '../../src/host/cage'
 import { extractHandoffConclusion, heartbeatOf, epochStopReason, epochStopDetail, isRetriableTurnError, driveResidentTurn, createResidentPair } from '../../src/host/resident'
 import { settledItemsOf } from '../../src/debate/debate'
@@ -1662,12 +1662,17 @@ describe('ADR-0027 前台占位 hold', () => {
       createdAt: 0, updatedAt: 0,
     }
     sessions.set(s.id, s)
+    const bg = new AbortController()
+    __testControllers.set(s.id, bg)
     try {
       const ctl = new AbortController()
       const p = executeHoldTool({ sessionId: s.id }, { signal: ctl.signal })
       ctl.abort()
       await expect(p).rejects.toThrow('aborted')
+      // 双停关键一跳:前台 abort 必须把后台 controllers 也 abort 掉,不能只停前台。
+      expect(bg.signal.aborted).toBe(true)
     } finally {
+      __testControllers.delete(s.id)
       sessions.delete(s.id)
     }
   })

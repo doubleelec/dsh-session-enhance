@@ -909,6 +909,16 @@ export async function sweepSingleThread(
 const controllers = new Map<string, AbortController>()
 
 /**
+ * @internal 测试缝:给单测往中止表里放/取控制器,断言双停链"前台 abort → 后台 abort"。
+ * 生产路由只调 set/delete;不构成公开 API。
+ */
+export const __testControllers = {
+  set(id: string, ctl: AbortController): void { controllers.set(id, ctl) },
+  get(id: string): AbortController | undefined { return controllers.get(id) },
+  delete(id: string): void { controllers.delete(id) },
+}
+
+/**
  * 前台占位 hold 等待表(ADR-0027):sessionId → settlement 时 resolve 的回调集合。
  * hold execute 在这里挂起;runHostDebate 的 try/catch/finally 落定处统一唤醒。
  * 用户点停 → tool abort 会打断挂起的 execute(宿主行为),execute 侧 abort 后台任务(双停)。
