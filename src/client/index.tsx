@@ -742,15 +742,14 @@ function DebateDialog(props: { onClose: () => void; useSessions?: (s: unknown) =
   // 占位态(ADR-0027)也露半句:真跑验证第 2 步不用展开面板就能看"已起/未拉起"。
   if (minimized) {
     const miniLabel = status === 'running' ? tr('minimized.running') : status === 'done' ? tr('minimized.done') : tr(`st.${status}`)
-    // 胶囊只露短词(右下角 fixed,长文案会盖住发送/停止按钮);完整占位状态只在面板里看。
-    // 长串说明文字一律丢进 title(悬停可见),胶囊本体只留状态词 + 版本号。
+    // 胶囊本体只留状态词(右下角 fixed,多一个字都可能盖住发送/停止按钮)。
+    // 占位态 + 版本号一律只进 title(悬停可见):running 时 title 形如"辩论进行中 · 占位中 · v0.14.1"。
     const miniHoldKey = status === 'running' && placeholderRaised !== undefined ? (placeholderRaised ? 'hold.miniOn' : 'hold.miniOff') : null
     const miniTitle = [miniLabel, miniHoldKey ? tr(miniHoldKey) : null, versionTip].filter(Boolean).join(' · ')
     return (
       <button className={C('dshe-mini')} onClick={() => setMinimized(false)} title={miniTitle} aria-label={tr('btn.restore')}>
         <span className={C(status === 'running' ? 'dot-live' : 'dot-done')} />
-        <span>⚔ {miniLabel}{miniHoldKey ? ` · ${tr(miniHoldKey)}` : ''}</span>
-        <span className={C('dshe-version') + (versionWarn !== null ? ` ${C('dshe-version-warn')}` : '')} title={versionTip}>{versionText}{versionWarn !== null ? ' ⚠' : ''}</span>
+        <span>⚔ {miniLabel}</span>
       </button>
     )
   }
