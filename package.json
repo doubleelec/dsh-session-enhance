@@ -72,6 +72,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:sandbox": "node scripts/test-sandbox.mjs",
+    "deliver": "node scripts/deliver.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
