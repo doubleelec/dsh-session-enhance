@@ -28,7 +28,7 @@
 
 ## 决定
 
-1. **重注册唯一阻塞式 hold 工具**（名待 T3 定，候选 `debate_hold_foreground`）：
+1. **重注册唯一阻塞式 hold 工具**（T3 已定名 `debate_hold_foreground`）：
    `inject` 加回 `'tools'`，`apply` 内 `ctx.tools.register(defineTool({...}))`
    全 DSL（`output.render` 必需，`exec.signal` 必有、`exec.agent?` 可选）。
    工具语义：参数只带 `sessionId`（+ 可选 `reason`），`execute` 内
