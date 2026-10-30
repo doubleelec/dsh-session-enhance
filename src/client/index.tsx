@@ -729,12 +729,14 @@ function DebateDialog(props: { onClose: () => void; useSessions?: (s: unknown) =
         : null
 
   // 最小化胶囊:只占右下角一条,轮询不停,点恢复回到完整窗口。
+  // 占位态(ADR-0027)也露半句:真跑验证第 2 步不用展开面板就能看"已起/未拉起"。
   if (minimized) {
     const miniLabel = status === 'running' ? tr('minimized.running') : status === 'done' ? tr('minimized.done') : tr(`st.${status}`)
+    const miniHold = status === 'running' && placeholderRaised !== undefined ? (placeholderRaised ? ` · ${tr('hold.on')}` : ` · ${tr('hold.off')}`) : ''
     return (
       <button className={C('dshe-mini')} onClick={() => setMinimized(false)} title={tr('btn.restore')} aria-label={tr('btn.restore')}>
         <span className={C(status === 'running' ? 'dot-live' : 'dot-done')} />
-        <span>⚔ {miniLabel}</span>
+        <span>⚔ {miniLabel}{miniHold}</span>
         <span className={C('dshe-version') + (versionWarn !== null ? ` ${C('dshe-version-warn')}` : '')} title={versionTip}>{versionText}{versionWarn !== null ? ' ⚠' : ''}</span>
       </button>
     )
