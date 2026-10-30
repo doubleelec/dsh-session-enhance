@@ -1175,8 +1175,9 @@ export async function runHostDebate(
     }
     if ((!parent || !parent.session) && agents) {
       // host 自建满血 parent(preset 继承链:子 agent 拿到 standard 全套工具)。
-      // 注意这是无活体会话时的兜底:发起会话的 parent 拿不到才走这里,
-      // 此时没有发起会话 cwd 可继承,用进程目录(探针/无会话场景)。
+      // 注意:这是无活体会话时的兜底(探针/无会话场景),此时没有发起会话 cwd 可
+      // 继承,用进程目录。给 API 传空 sid 会走到这里,后果是没有对话区可写、
+      // 也没有前台 turn 可占:探针只能看后台半边,UI 目击必须从用户真实会话点火。
       try {
         const full = await createFullParent(ctx, agents, `se-parent-${session.id}`, session.config.synthesizer, signal, session.config.targetCwd)
         owned = { dispose: full.dispose }
