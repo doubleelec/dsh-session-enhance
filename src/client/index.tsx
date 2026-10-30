@@ -69,6 +69,7 @@ const DICTS: Record<string, Record<string, string>> = {
     'mirror.off': '仅面板(自建 parent,无对话区可写)',
     'mirror.on': '对话区镜像', 'mirror.fail': '镜像失败',
     'hold.on': '前台占位 turn 已起(发起会话进入运行态)', 'hold.off': '前台占位未拉起(进度走面板+直播)',
+    'hold.miniOn': '占位中', 'hold.miniOff': '未占位',
     'interrupt.mark': '⛔ 此处被打断(后续实录是停机前已写完的,之后无新增)',
     'btn.start': '开始辩论', 'btn.stop': '停止', 'btn.close': '关闭',
     'btn.interrupt': '一键双停', 'btn.interruptTip': '连发起会话的 turn 一起停(用户刚说的话留着),后台辩论同步中止',
@@ -129,6 +130,7 @@ const DICTS: Record<string, Record<string, string>> = {
     'mirror.off': 'panel only (self-built parent, no chat surface)',
     'mirror.on': 'chat mirror', 'mirror.fail': 'mirror failed',
     'hold.on': 'foreground placeholder turn raised (parent session running)', 'hold.off': 'no foreground placeholder (progress via panel+live mirror)',
+    'hold.miniOn': 'holding', 'hold.miniOff': 'no hold',
     'interrupt.mark': '⛔ interrupted here (entries below were finished before stop, nothing after)',
     'btn.start': 'Start debate', 'btn.stop': 'Stop', 'btn.close': 'Close',
     'btn.interrupt': 'Interrupt both', 'btn.interruptTip': 'Stop the parent turn too (keep what the user just said), abort the background debate',
@@ -740,7 +742,8 @@ function DebateDialog(props: { onClose: () => void; useSessions?: (s: unknown) =
   // 占位态(ADR-0027)也露半句:真跑验证第 2 步不用展开面板就能看"已起/未拉起"。
   if (minimized) {
     const miniLabel = status === 'running' ? tr('minimized.running') : status === 'done' ? tr('minimized.done') : tr(`st.${status}`)
-    const miniHold = status === 'running' && placeholderRaised !== undefined ? (placeholderRaised ? ` · ${tr('hold.on')}` : ` · ${tr('hold.off')}`) : ''
+    // 胶囊只露短词(右下角 fixed,长文案会盖住发送/停止按钮);完整占位状态只在面板里看。
+    const miniHold = status === 'running' && placeholderRaised !== undefined ? (placeholderRaised ? ` · ${tr('hold.miniOn')}` : ` · ${tr('hold.miniOff')}`) : ''
     return (
       <button className={C('dshe-mini')} onClick={() => setMinimized(false)} title={tr('btn.restore')} aria-label={tr('btn.restore')}>
         <span className={C(status === 'running' ? 'dot-live' : 'dot-done')} />

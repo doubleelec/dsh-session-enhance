@@ -51,7 +51,7 @@ export interface AgentsLike {
   create(options: {
     sessionId: string
     parentAgent?: unknown
-    meta?: { cwd?: string; parentSession?: string; isSeeded?: boolean; origin?: 'subagent'; delegationDepth?: number; agentPreset?: string }
+    meta?: { cwd?: string; parentSession?: string; isSeeded?: boolean; origin?: 'subagent'; delegationDepth?: number; agentPreset?: string; seedLength?: number }
     agentOptions?: { provider?: string; model?: string }
     signal?: AbortSignal
     setup?: (agentCtx: any, agent?: any) => void | Promise<void>

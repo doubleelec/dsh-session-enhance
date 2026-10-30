@@ -245,11 +245,30 @@ async function pointerExistsFn(cwd: string | undefined): Promise<((p: string) =>
   }
 }
 
+/** 插件直播身份(dsh-llm MessageSourceMap 正式成员):source.kind 只能是 plugin,不能冒充 user。 */
+export const MIRROR_SOURCE_PLUGIN = 'dsh-session-enhance' as const
+/** notice 摘要上限(dsh-llm CONTEXT_SUMMARY_MAX_CHARS,120 字)。 */
+export const MIRROR_SUMMARY_MAX = 120 as const
+
+/**
+ * 镜像消息 source 构造(纯函数,单测锁身份:plugin notice,不冒充用户说话)。
+ * summary 取首行、超限截断(notice 要求一行说明)。
+ */
+export function mirrorSourceOf(text: string): { kind: 'plugin'; plugin: typeof MIRROR_SOURCE_PLUGIN; form: 'notice'; summary: string } {
+  const firstLine = text.split('\n')[0] ?? ''
+  const summary = firstLine.length > MIRROR_SUMMARY_MAX ? `${firstLine.slice(0, MIRROR_SUMMARY_MAX - 1)}…` : firstLine
+  return { kind: 'plugin', plugin: MIRROR_SOURCE_PLUGIN, form: 'notice', summary }
+}
+
 /**
  * 把一步结果镜像进对话区(真实 parent 会话才 append)。
  * 直接 session.append('user/message', …, { surfaceOp: 'append' }):
  * 对话区即时可见,但只是日志追加,不进 inbox、不开 turn、不唤醒模型——纯直播,不干扰。
  * assistant/message 在空闲会话里写不进去(invariant 要求 open turn/step),所以用 user/message。
+ * 身份必须是 plugin notice(dsh-llm MessageSourceMap 正式成员),不能冒充 kind:'user':
+ * role 层只有 user/assistant 两种,但 GUI 按 source.kind 区分渲染——kind:'user' 会被当成
+ * 用户自己说的话(2026-10-30 实测:进度行顶着用户身份出现)。notice 另带 summary(≤120 字),
+ * "一行说明,不用展开整行",正好是直播行的样子。
  * 文本带 ⚔ 辩论 前缀,问题提取时会被过滤,不污染后续提问。
  * 成功/失败都记数,不静默(面板可观测 mirrorCount/mirrorError)。
  */
@@ -265,7 +284,7 @@ function mirror(parent: ParentAgent, session: DebateSession, text: string): void
       id: `se-mirror-${session.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       role: 'user',
       content: [{ type: 'text', text }],
-      source: { kind: 'user' },
+      source: mirrorSourceOf(text),
     }, { surfaceOp: 'append' })
     session.mirrorCount += 1
     session.mirrorError = null
@@ -792,7 +811,8 @@ export interface SingleThread {
  * + agentOptions(发起会话当前模型,单模型双角色:agentDefaultModel.currentSelection,
  * 与 fork 链同源;拿不到则不带,让 preset 默认模型接管) + setup(join preset 生成)。
  * cwd 三级:显式目标工作区 > 发起会话 cwd > 进程目录(与 createResidentPair 同序)。
- * 注意:分叉 origin 不带 subagent(与常驻对区分,分叉在侧边栏可见、可回看)。
+ * 展示层血统与常驻对齐:origin=subagent,让侧边栏归进 parent 的 subagentCatalog,
+ * 不再堆"同名未分组会话"(草稿会话仍可通过 subagentCatalog/诊断找到,收尾照旧清扫)。
  */
 export async function createSingleThread(
   ctx: Context,
@@ -830,6 +850,9 @@ export async function createSingleThread(
       cwd,
       parentSession: parent.session.id,
       isSeeded: true,
+      // 展示层血统(与常驻对齐):origin=subagent 让侧边栏归进 parent 的 subagentCatalog,
+      // 不再堆一条"同名未分组会话"(2026-10-30 实测:缺它分叉裸奔进未分组)。
+      origin: 'subagent',
       ...(presetId !== null && presetId !== '' ? { agentPreset: presetId } : {}),
     },
     ...(seed ? { seed, inheritedEventCount: boundary + 1 } : {}),

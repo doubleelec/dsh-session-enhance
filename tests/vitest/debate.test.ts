@@ -46,7 +46,7 @@ import {
   type DebateRound,
   type TranscriptEntry,
 } from '../../src/debate/debate'
-import { normalizeConfig, extractModelEcho, isRouteIneffective, resolveAuto, settledDefsOf, settledItemsOfSession, stepOpen, stepRound, stepSynthesize, sessions, __testControllers, stepOpenResident, stepRoundResident, stepOpenSingle, stepRoundSingle, buildDebateForkSeed, createSingleThread, recordRoundAndJudge, interruptMarkOf, parentBusyOf, interruptPlanOf, interruptParentErrorOf, HOLD_TOOL_NAME, shouldHoldResolve, holdReturnTextOf, holdPromptOf, closePlaceholderTurn, waitForDebateSettlement, notifyHoldSettled, executeHoldTool } from '../../src/index'
+import { normalizeConfig, extractModelEcho, isRouteIneffective, resolveAuto, settledDefsOf, settledItemsOfSession, stepOpen, stepRound, stepSynthesize, sessions, __testControllers, stepOpenResident, stepRoundResident, stepOpenSingle, stepRoundSingle, buildDebateForkSeed, createSingleThread, recordRoundAndJudge, interruptMarkOf, parentBusyOf, interruptPlanOf, interruptParentErrorOf, HOLD_TOOL_NAME, shouldHoldResolve, holdReturnTextOf, holdPromptOf, closePlaceholderTurn, waitForDebateSettlement, notifyHoldSettled, executeHoldTool, mirrorSourceOf, MIRROR_SOURCE_PLUGIN, MIRROR_SUMMARY_MAX } from '../../src/index'
 import { toolAllowFor, resolveToolAllow, cageLabel, visibleNamesOf, scopedToolGuard, turnVerdict, DEBATER_TOOL_ALLOW, SYNTH_TOOL_ALLOW, STEP_STALL_MS, STEP_HARD_CAP_MS } from '../../src/host/cage'
 import { extractHandoffConclusion, heartbeatOf, epochStopReason, epochStopDetail, isRetriableTurnError, driveResidentTurn, createResidentPair } from '../../src/host/resident'
 import { settledItemsOf } from '../../src/debate/debate'
@@ -856,10 +856,10 @@ describe('single thread', () => {
     expect(created.length).toBe(1)
     expect(created[0].sessionId).toBe('se-x-single')
     // 分叉血统:parentSession 指向发起会话,isSeeded=true 继承上下文(无互盲);
-    // origin 不带 subagent(与常驻对区分,分叉在侧边栏可见、可回看)。
+    // origin=subagent(与常驻对齐):侧边栏归进 subagentCatalog,不堆"同名未分组会话"。
     expect(created[0].meta?.parentSession).toBe('parent-1')
     expect(created[0].meta?.isSeeded).toBe(true)
-    expect(created[0].meta?.origin).toBeUndefined()
+    expect(created[0].meta?.origin).toBe('subagent')
     // 种子透传:源事件前缀 + end-seed,inheritedEventCount 对齐。
     expect(Array.isArray(created[0].seed)).toBe(true)
     expect((created[0].seed as unknown[]).length).toBe(2)
@@ -1592,6 +1592,19 @@ describe('ADR-0027 前台占位 hold', () => {
     expect(p).toContain(HOLD_TOOL_NAME)
     expect(p).toContain('se-9')
     expect(p).not.toContain('"se-9"')
+  })
+  it('mirrorSourceOf:plugin notice 身份,不冒充用户;summary 取首行超限截断', () => {
+    expect(MIRROR_SOURCE_PLUGIN).toBe('dsh-session-enhance')
+    expect(MIRROR_SUMMARY_MAX).toBe(120)
+    const s1 = mirrorSourceOf('⏳ 建构者开写中(单线)…')
+    expect(s1).toEqual({ kind: 'plugin', plugin: 'dsh-session-enhance', form: 'notice', summary: '⏳ 建构者开写中(单线)…' })
+    expect(s1.kind).not.toBe('user')
+    const long = `${'x'.repeat(200)}\n第二行`
+    const s2 = mirrorSourceOf(long)
+    expect(s2.summary.length).toBeLessThanOrEqual(120)
+    expect(s2.summary.endsWith('…')).toBe(true)
+    expect(s2.summary).not.toContain('第二行')
+    expect(mirrorSourceOf('').summary).toBe('')
   })
   it('closePlaceholderTurn:cancel 只停 turn,keepInbox 留消息;无 parent 不炸;没拉起不收', () => {
     const calls: unknown[][] = []
