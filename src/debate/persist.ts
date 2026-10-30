@@ -20,8 +20,13 @@ export const STORAGE_UNIT = 'dsh_session_enhance'
 /** 存储表名。 */
 export const STORAGE_TABLE = 'sessions'
 
-/** 结论文档所在目录(相对工作区,posix 分隔符)。 */
-export const REPORT_DIR = 'docs/session-enhance'
+/**
+ * 结论文档所在目录(相对目标工作区,posix 分隔符)。
+ * 边路产出物,不进 docs(工程文档是给人看的,结论是机器产出物,混在一起检索与清理都串味)。
+ * 历史:2026-10-30 前是 `docs/session-enhance`,老局的 reportRel 仍按旧路径读,不搬迁;
+ * 之后的新局走 `.debate/`。
+ */
+export const REPORT_DIR = '.debate'
 
 /** slug 码点上限。文件名是索引不是复述:12 字 + 日期 + id 尾足够定位,标题全文在文件内第一行。 */
 export const SLUG_MAX_CODEPOINTS = 12
@@ -236,7 +241,7 @@ export function duration(ms: number): string {
 }
 
 /**
- * 结论文档的相对路径:`docs/session-enhance/<日期>-<问题 slug>-<id 尾>.md`。
+ * 结论文档的相对路径:`.debate/<日期>-<问题 slug>-<id 尾>.md`(2026-10-30 前的老局是 docs/session-enhance/…)。
  * 带上 id 尾:同一天问同一个问题两次也不会互相覆盖,而且能从文件名反查到是哪一局。
  */
 export function reportRelPath(createdAt: number, question: string, id: string): string {

@@ -253,11 +253,12 @@ let taskPanelOpen = false
 const subscribeTaskOpen = (fn: (v: boolean) => void): (() => void) => { openTaskListeners.add(fn); return () => { openTaskListeners.delete(fn) } }
 const setTaskPanelOpen = (v: boolean): void => { taskPanelOpen = v; openTaskListeners.forEach((fn) => fn(v)) }
 let prefillQuestion = ''
+let prefillSid = ''
 // 多仓任务描述(ADR-0028):入口收输入框草稿,TaskDialog 挂载时预填,可改,草稿不清。
 let prefillTaskDesc = ''
 // 当前会话 id(input.right 是 session scope,标准 props 自带 sessionId,入口每次渲染更新)。
 let currentSid = ''
-interface InputActs { setDraft(d: string): void; submit?(): void }
+interface InputActs { setDraft(d: string): void; submit(): void }
 
 // 建单成功后清空输入框的回调(InputEntry 注册,DebateDialog 建单成功后调用)。
 let clearDraftOnStart: (() => void) | null = null
@@ -584,10 +585,17 @@ function DebateDialog(props: { onClose: () => void; useSessions?: (s: unknown) =
     stickRef.current = true
     // 硬触发:按钮直调 HTTP 建单即直驱,不经模型转述。hint=输入框问题快照,
     // cwd=当前会话工作区(面板从 useSessions 读,host 侧 Web 会话不可见,只能面板传),
-    // sid=当前会话 id(读会话背景用,拿不到也不挡路)。
-    // 建单成功才清空输入框(内容已收进 hint)。
+    // sid=点"创建辩论"菜单那一刻的发起会话快照(prefillSid),不用点"开始"时的 liveSid
+    // (overlay 是全局的,用户可能在对话框里切会话,串会话即从这里来)。
+    // 建单成功才正常发送输入框(内容已收进 hint):用户那句以用户身份进会话,
+    // 会话区首条即原话,占位 followup 排第二,标题自然取对。不再清空吞话。
     const hint = prefillQuestion.trim()
     if (hint === '') { setError('先在输入框写下要辩的问题'); return }
+    // sid 快照兜底:快照丢了(老流程/异常)才用当前 liveSid,绝不传空——空 sid
+    // 会让 host 兜底 first-live,把占位投进无辜会话(2026-10-30 实测)。
+    // 快照与当前不一致(点了菜单后切了会话)以快照为准:问题写在哪,就投回哪。
+    const sidToSend = prefillSid !== '' ? prefillSid : liveSid
+    if (sidToSend === '') { setError('拿不到发起会话 id,请关掉面板、在目标会话输入框重新点"创建辩论"'); return }
     try {
       const r = await api<{ ok: boolean; id?: string; error?: string }>('start', {
         builder: MODELS[builder],
@@ -595,12 +603,13 @@ function DebateDialog(props: { onClose: () => void; useSessions?: (s: unknown) =
         synthesizer: MODELS[synth],
         maxRounds: roundsToSubmit(),
         hint,
-        sid: liveSid,
+        sid: sidToSend,
         cwd: liveCwd,
       })
       if (!r.ok || !r.id) { setError(r.error ?? 'start failed'); return }
       try { clearDraftOnStart?.() } catch { /* 忽略 */ }
       prefillQuestion = ''
+      prefillSid = ''
       // 建单成功即最小化:辩论是后台长任务,面板缩成右下角胶囊(带 running 绿点),
       // 进度走对话区 mirror + 胶囊点回。用户点 ✕ 是关面板,点 — 是最小化,开始即后者。
       setMinimized(true)
@@ -1050,8 +1059,11 @@ function InputButton(props: { useInput?: (s: unknown) => unknown; inputActions?:
       // 防线:调用方保证输入框有内容才点菜单,空草稿直接关菜单不建空单。
       return
     }
-    // 只读不清空:内容进对话框起点展示,等点"开始辩论"建单成功后才清空输入框。
+    // 只读不清空:内容进对话框起点展示,等点"开始辩论"建单成功后才正常发送草稿。
+    // sid 一起快照:建单用"点菜单那一刻"的发起会话,不用"点开始"那一刻的(overlay 面板
+    // 是全局的,点开始时用户可能已切到别的会话,liveSid 会变成别的会话,占位就串了)。
     prefillQuestion = draft.trim()
+    prefillSid = typeof currentSid === 'string' ? currentSid : ''
     openPanel?.()
   }
   const openTask = (): void => {
@@ -1113,7 +1125,7 @@ function InputButton(props: { useInput?: (s: unknown) => unknown; inputActions?:
   )
 }
 
-/** 输入桥:捕获 sessionId + inputActions(建单直驱 + 建单后清空输入框);同时渲染输入框内小按钮。 */
+/** 输入桥:捕获 sessionId + inputActions(建单直驱 + 建单后正常发送草稿)。 */
 function InputEntry(props: { useInput?: (s: unknown) => unknown; inputActions?: InputActs; sessionId?: unknown }): React.ReactNode {
   const actions = props.inputActions
   const scopedSid = resolveSessionId(props.sessionId)
@@ -1125,8 +1137,11 @@ function InputEntry(props: { useInput?: (s: unknown) => unknown; inputActions?: 
           actions.setDraft(text)
         } catch { /* 忽略 */ }
       }
+      // 建单成功后不清草稿,走正常发送:用户那句以用户身份进会话日志,
+      // 会话区首条即用户原话(标题也自然取对),占位 followup 排第二。
+      // 发送成功宿主自己清草稿;失败则草稿还在,用户看得见,不吞话。
       clearDraftOnStart = () => {
-        try { actions.setDraft('') } catch { /* 忽略 */ }
+        try { actions.submit() } catch { /* 发送失败不拦建单,草稿留着 */ }
       }
     }
     return () => { bridgeInsert = null; clearDraftOnStart = null }
@@ -1697,7 +1712,7 @@ export function apply(ctx: CtxLike): void {
       // is not populated unless we use the registration injection contract.
       inject: (sessionId) => ({ sessionId }),
     },
-    (props: never) => <InputEntry {...(props as { useInput?: (s: unknown) => unknown; inputActions?: { setDraft(d: string): void }; sessionId?: unknown })} />,
+    (props: never) => <InputEntry {...(props as { useInput?: (s: unknown) => unknown; inputActions?: InputActs; sessionId?: unknown })} />,
   ))
   slots.inject('settings.section', () => slots.register(
     { name: 'settings.section', id: 'enhance', order: 31, label: () => '会话增强' },

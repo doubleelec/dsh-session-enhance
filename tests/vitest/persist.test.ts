@@ -117,7 +117,7 @@ describe('记录往返(toRecord → fromRecord)', () => {
       quoteAudit: { quotableLines: 4, quotedLines: 2, hitLines: [1], hitRate: 0.5 },
     }]
     const tr: TranscriptEntry[] = [{ seq: 1, role: 'builder', round: 1, text: 'hi' }]
-    const rec = toRecord(mkSession({ rounds, transcript: tr, reportRel: 'docs/session-enhance/x.md' }))
+    const rec = toRecord(mkSession({ rounds, transcript: tr, reportRel: '.debate/x.md' }))
     const back = fromRecord(rec)
     expect(back).not.toBeNull()
     expect(back?.id).toBe('se-abc-1')
@@ -126,7 +126,7 @@ describe('记录往返(toRecord → fromRecord)', () => {
     expect(back?.rounds[0]?.pendingItems).toEqual(['x'])
     expect(back?.rounds[0]?.quoteAudit.hitRate).toBe(0.5)
     expect(back?.transcript[0]?.text).toBe('hi')
-    expect(back?.reportRel).toBe('docs/session-enhance/x.md')
+    expect(back?.reportRel).toBe('.debate/x.md')
     expect(back?.mode).toBe('resident')
   })
 
@@ -251,12 +251,12 @@ describe('文件名安全(slugify / reportRelPath)', () => {
     expect(slugify('以上,继续:怎样的管理架构更适合 agent 编程')).toContain('管理架构')
   })
 
-  it('路径形状固定:docs/session-enhance/<日期>-<slug>-<id尾>.md', () => {
+  it('路径形状固定:.debate/<日期>-<slug>-<id尾>.md(2026-10-30 起,老局仍是 docs/session-enhance/…)', () => {
     const p = reportRelPath(1_700_000_000_000, '多仓上 K8s?', 'se-abc123-7')
     expect(p.startsWith(`${REPORT_DIR}/`)).toBe(true)
     expect(p.endsWith('.md')).toBe(true)
-    expect(p.split('/').length).toBe(3)
-    expect(p).toMatch(/^docs\/session-enhance\/\d{4}-\d{2}-\d{2}-.+-[a-zA-Z0-9]{6}\.md$/)
+    expect(p.split('/').length).toBe(2)
+    expect(p).toMatch(/^\.debate\/\d{4}-\d{2}-\d{2}-.+-[a-zA-Z0-9]{6}\.md$/)
   })
 
   it('同一问题不同局不互相覆盖(文件名带 id 尾)', () => {

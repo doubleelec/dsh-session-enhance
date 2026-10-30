@@ -539,7 +539,7 @@ function newId(): string {
 //
 // 两条独立的耐久化路径,各自的理由不同:
 // - 整局记录进 ctx.storage 的 KV 单元 → 宿主重启后旧局仍打得开(修 unknown-id);
-// - 结论文档写进工作区 docs/debates/ → 给人和未来的 agent 一个有地址的产物,压缩吃不掉它。
+// - 结论文档写进目标工作区 .debate/ → 给人和未来的 agent 一个有地址的产物,压缩吃不掉它。
 //
 // **刻意不 import `@deepseek-ai/dsh-storage`**:插件自己 node_modules 里那份是 0.1.1-rc.2,
 // 宿主实际跑的是 0.2.0-rc.2(实测两版本并存)。拿旧包的类型去喂新实现是埋雷,所以只按
@@ -756,7 +756,7 @@ async function writeReport(session: DebateSession): Promise<string | null> {
       stopText: stopReasonText(session),
       gapSpans: gapSpansOf(session),
     })
-    // 目录可能还不存在(targetCwd 建单时只校验过存在性,docs/debates 未必有)。
+    // 目录可能还不存在(targetCwd 建单时只校验过存在性,.debate 未必有)。
     fs.mkdirSync(path.dirname(abs), { recursive: true })
     fs.writeFileSync(abs, text, 'utf-8')
     session.reportRel = rel
@@ -1327,13 +1327,21 @@ export async function runHostDebate(
     if ((!parent || !parent.session) && sid !== '') {
       parent = (agents?.get(sid) ?? undefined) as ParentAgent | undefined
     }
-    if ((!parent || !parent.session) && agents) {
-      // sid 对不上(面板没传/传错)则兜底取第一个活体会话,对话区仍能直播。
+    if ((!parent || !parent.session) && agents && givenParent) {
+      // 工具入口自带 parent,但 parent.session 缺失的极端兜底:取第一个活体。
+      // 注意:面板硬触发(无 givenParent)绝不走这条——sid 对不上就报错,不许把
+      // 占位指令投到无辜会话(2026-10-30 实测:兜底 first-live 把辩题投进工作会话)。
       try {
         const live = agents.list() ?? []
         const first = live.find((a) => (a as ParentAgent)?.session?.id) as ParentAgent | undefined
         if (first?.session) parent = first
       } catch { /* 兜底失败则走自建 */ }
+    }
+    // 面板硬触发 sid 对不上:直接报错,不兜底。兜底 first-live 会把占位指令
+    // 投进别的会话(带辩题的 followup + mirror 全过去),比"不起占位"糟得多。
+    // 不起占位只是降级(面板+mirror 照看);投错会话是污染,不可接受。
+    if ((!parent || !parent.session) && !givenParent) {
+      throw new Error(`no-live-agent:面板没拿到当前会话(sid=${sid === '' ? '空' : '对不上'}),占位指令无处可投——请在 3080 打开目标会话、输入框有内容时再点开始(不兜底取别的会话,防串会话污染)`)
     }
     if ((!parent || !parent.session) && agents) {
       // host 自建满血 parent(preset 继承链:子 agent 拿到 standard 全套工具)。
@@ -1349,7 +1357,12 @@ export async function runHostDebate(
       }
     }
     if (!parent || !parent.session) throw new Error('no-live-agent:面板没拿到当前会话 id,先在 3080 打开一个会话再重试')
-    // 真实会话(parent 来自 agents.get/兜底活体)才镜像进度到对话区;自建 parent 没有对话区可写。
+    // 真实会话(parent 来自 agents.get(sid))才镜像进度到对话区;自建 parent 没有对话区可写。
+    // mirrorToChat 必须同时认 sid:parent.session.id 与传入 sid 一致,才是真的发起会话。
+    // 否则(兜底/错配)mirror 会把辩题刷进无辜会话——与占位投错同源,同拦。
+    if (owned === null && sid !== '' && parent.session.id !== sid) {
+      throw new Error(`wrong-parent:发起会话对不上(sid=${sid},实际拿到 ${String(parent.session.id)}),占位与镜像无处可投——请在目标会话输入框有内容时再点开始(不兜底,防串会话污染)`)
+    }
     session.mirrorToChat = owned === null
     session.parentSid = owned === null ? (parent.session.id as string) : null
     if (signal.aborted) throw new Error('aborted')
