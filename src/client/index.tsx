@@ -68,6 +68,7 @@ const DICTS: Record<string, Record<string, string>> = {
     'audit.title': '停机审计', 'audit.quoted': '引用', 'audit.relay': '交棒',
     'mirror.off': '仅面板(自建 parent,无对话区可写)',
     'mirror.on': '对话区镜像', 'mirror.fail': '镜像失败',
+    'hold.on': '前台占位 turn 已起(发起会话进入运行态)', 'hold.off': '前台占位未拉起(进度走面板+直播)',
     'interrupt.mark': '⛔ 此处被打断(后续实录是停机前已写完的,之后无新增)',
     'btn.start': '开始辩论', 'btn.stop': '停止', 'btn.close': '关闭',
     'btn.interrupt': '一键双停', 'btn.interruptTip': '连发起会话的 turn 一起停(用户刚说的话留着),后台辩论同步中止',
@@ -127,6 +128,7 @@ const DICTS: Record<string, Record<string, string>> = {
     'audit.title': 'Stop audit', 'audit.quoted': 'quoted', 'audit.relay': 'relay',
     'mirror.off': 'panel only (self-built parent, no chat surface)',
     'mirror.on': 'chat mirror', 'mirror.fail': 'mirror failed',
+    'hold.on': 'foreground placeholder turn raised (parent session running)', 'hold.off': 'no foreground placeholder (progress via panel+live mirror)',
     'interrupt.mark': '⛔ interrupted here (entries below were finished before stop, nothing after)',
     'btn.start': 'Start debate', 'btn.stop': 'Stop', 'btn.close': 'Close',
     'btn.interrupt': 'Interrupt both', 'btn.interruptTip': 'Stop the parent turn too (keep what the user just said), abort the background debate',
@@ -382,6 +384,8 @@ function DebateDialog(props: { onClose: () => void; useSessions?: (s: unknown) =
   const [reportError, setReportError] = useState<string | null>(null)
   const [restored, setRestored] = useState(false)
   const [interruptedAt, setInterruptedAt] = useState<{ round: number; seq: number } | null>(null)
+  // 前台占位(ADR-0027):true=已拉起(发起会话进入运行态),false=自建 parent/拉起失败(undefined=老局,按已拉起处理)。
+  const [placeholderRaised, setPlaceholderRaised] = useState<boolean | undefined>(undefined)
   /**
    * 版本对账(v0.4):徽标显示**后台真正在跑的版本**(host 内联常量),不是磁盘版本。
    * null = 还没拿到;verMissing = 后台没这条路由(旧宿主)或取数失败。
@@ -521,6 +525,7 @@ function DebateDialog(props: { onClose: () => void; useSessions?: (s: unknown) =
       if (s.reportError !== undefined) setReportError(s.reportError)
       if (s.restored !== undefined) setRestored(s.restored === true)
       if (s.interruptedAt !== undefined) setInterruptedAt(s.interruptedAt)
+      if (s.placeholderRaised !== undefined) setPlaceholderRaised(s.placeholderRaised === true ? true : s.placeholderRaised === false ? false : undefined)
       if (s.status === 'done' || s.status === 'failed' || s.status === 'stopped') {
         if (timer.current !== null) { window.clearInterval(timer.current); timer.current = null }
         if (s.status === 'failed') setError(s.error ?? 'failed')
@@ -887,11 +892,13 @@ function DebateDialog(props: { onClose: () => void; useSessions?: (s: unknown) =
             ))}
           </div>
         )}
-        {/* 镜像状态:对话区有没有同步,不再静默(mirrorCount/mirrorError host 早就有)。 */}
+        {/* 镜像状态:对话区有没有同步,不再静默(mirrorCount/mirrorError host 早就有)。
+            前台占位(ADR-0027):拉起与否一眼可见,真跑验证不用猜。 */}
         {sessionId !== null && status !== 'idle' && (
           <div className={C('dshe-note')}>
             {mirrorCount > 0 ? `${tr('mirror.on')} ×${mirrorCount}` : tr('mirror.off')}
             {mirrorError !== null ? ` · ${tr('mirror.fail')}:${mirrorError}` : ''}
+            {placeholderRaised !== undefined ? ` · ${placeholderRaised ? tr('hold.on') : tr('hold.off')}` : ''}
           </div>
         )}
         {error !== null && <div className={C('dshe-error')}>{error}</div>}
