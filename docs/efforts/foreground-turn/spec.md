@@ -41,8 +41,9 @@ turn）。发起会话全程 `idle`：发送按钮不变、没有"深度求索�
 ## Testing Decisions
 
 - T1 探针：真实 3090/dev 跑结论（`followup` 对 parent 的行为实测，不是单测能回答的）。
-- 实现后：单测覆盖中断映射（turn 取消 → abort → interruptedAt 落盘），真跑一局验
-  证"发送变停止 + 蓝字出现 + 取消即双停 + 结束 turn 收"。
+- 实现后：单测覆盖中断映射（turn 取消 → abort → interruptedAt 落盘）+ 双停
+  后台 abort 断言（`__testControllers` 测试缝），真跑一局验证四步（见 T3 票据：
+  起 turn → 心跳 → 双停 → 收 turn）。
 - 回归：vitest + pytest + arch 全绿。
 
 ## Further Notes
