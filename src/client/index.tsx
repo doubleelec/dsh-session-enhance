@@ -577,7 +577,7 @@ function DebateDialog(props: { onClose: () => void; useSessions?: (s: unknown) =
   }
 
   const start = async (): Promise<void> => {
-    setError(null); setTurns([]); setCopied(false); setResolved(null); setProgress('')
+    setError(null); setInterruptNote(null); setTurns([]); setCopied(false); setResolved(null); setProgress('')
     setStopReason(null); setRoundAudits([]); setMode(''); setMirrorCount(0); setMirrorError(null); setStreams({}); setDecision(null)
     stickRef.current = true
     // 硬触发:按钮直调 HTTP 建单即直驱,不经模型转述。hint=输入框问题快照,
@@ -614,7 +614,7 @@ function DebateDialog(props: { onClose: () => void; useSessions?: (s: unknown) =
   const follow = async (id: string): Promise<void> => {
     const sid = id.trim()
     if (sid === '') return
-    setError(null); setTurns([]); setCopied(false); setResolved(null); setProgress('')
+    setError(null); setInterruptNote(null); setTurns([]); setCopied(false); setResolved(null); setProgress('')
     setStopReason(null); setRoundAudits([]); setMode(''); setMirrorCount(0); setMirrorError(null); setStreams({}); setDecision(null)
     stickRef.current = true
     setSessionId(sid)
@@ -637,11 +637,19 @@ function DebateDialog(props: { onClose: () => void; useSessions?: (s: unknown) =
   }
 
   // S17 一键双停:停 parent turn(留住用户刚说的话) + abort 后台 debate。
+  // 回包带 parentStopped/parentError:前台没停掉要明说(自建局 no-placeholder-turn
+  // 不算错,前台本来就没 turn),不能静默。
+  const [interruptNote, setInterruptNote] = useState<string | null>(null)
   const interrupt = async (): Promise<void> => {
     if (!sessionId) return
     try {
-      await api('interrupt', { id: sessionId })
+      const r = await api<{ ok: boolean; parentStopped?: boolean; parentError?: string | null }>('interrupt', { id: sessionId })
       setStatus('stopped')
+      if (r.ok && r.parentStopped === false && r.parentError !== undefined && r.parentError !== null && r.parentError !== 'no-placeholder-turn') {
+        setInterruptNote(`前台 turn 没停掉(${r.parentError}),后台已停`)
+      } else {
+        setInterruptNote(null)
+      }
       if (timer.current !== null) { window.clearInterval(timer.current); timer.current = null }
     } catch (e) {
       setError(String(e))
@@ -904,6 +912,7 @@ function DebateDialog(props: { onClose: () => void; useSessions?: (s: unknown) =
           </div>
         )}
         {error !== null && <div className={C('dshe-error')}>{error}</div>}
+        {interruptNote !== null && <div className={C('dshe-error')}>{interruptNote}</div>}
         {/* 实时流:正在写的各方当前 turn 流式文本,打字机效果(结论落 transcript 即替换成正式 TurnCard)。 */}
         {status === 'running' && Object.keys(streams).map((role) => {
           const st = streams[role]

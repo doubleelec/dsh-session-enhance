@@ -2143,7 +2143,9 @@ export default {
               parentError = e instanceof Error ? e.message : String(e)
             }
           } else {
-            parentError = 'no-parent-sid'
+            // 自建 parent 的局:前台本来就没占位 turn(placeholderRaised=false),
+            // 双停只剩后台 abort,前台无事可停——记可读原因,不是报错。
+            parentError = session.placeholderRaised === false ? 'no-placeholder-turn' : 'no-parent-sid'
           }
           try { controllers.get(session.id)?.abort() } catch { /* 忽略 */ }
           if (session.status === 'running') {
