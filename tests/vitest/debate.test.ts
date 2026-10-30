@@ -1587,9 +1587,11 @@ describe('ADR-0027 前台占位 hold', () => {
     expect(holdReturnTextOf({ id: 'se-1', status: 'stopped' })).toContain('已中止')
     expect(holdReturnTextOf({ id: 'se-1', status: 'failed' })).toContain('已失败')
   })
-  it('holdPromptOf:拉起语点名 hold 工具 + sessionId', () => {
-    expect(holdPromptOf('se-9')).toContain(HOLD_TOOL_NAME)
-    expect(holdPromptOf('se-9')).toContain('se-9')
+  it('holdPromptOf:拉起语点名 hold 工具 + sessionId(裸写不带引号)', () => {
+    const p = holdPromptOf('se-9')
+    expect(p).toContain(HOLD_TOOL_NAME)
+    expect(p).toContain('se-9')
+    expect(p).not.toContain('"se-9"')
   })
   it('closePlaceholderTurn:cancel 只停 turn,keepInbox 留消息;无 parent 不炸;没拉起不收', () => {
     const calls: unknown[][] = []
@@ -1644,6 +1646,9 @@ describe('ADR-0027 前台占位 hold', () => {
     try {
       const text = await executeHoldTool({ sessionId: s.id }, { signal: new AbortController().signal })
       expect(text).toContain('已结束')
+      // 模型照抄带引号/空白的 id 也能查到局(拉起语裸写 + 剥离兜底,双保险)。
+      const quoted = await executeHoldTool({ sessionId: ` "${s.id}" ` }, { signal: new AbortController().signal })
+      expect(quoted).toContain('已结束')
       await expect(executeHoldTool({}, { signal: new AbortController().signal })).rejects.toThrow('requires sessionId')
       await expect(executeHoldTool({ sessionId: 'no-such' }, { signal: new AbortController().signal })).rejects.toThrow('unknown debate session')
     } finally {

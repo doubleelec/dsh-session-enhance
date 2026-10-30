@@ -85,9 +85,12 @@ export function holdReturnTextOf(session: { id: string; status: DebateStatus; co
   return `辩论已失败${what},错误见面板 state,本占位 turn 收。`
 }
 
-/** 占位拉起语(host followup 进 parent inbox,模型照做即调 hold 占住 turn)。纯函数,可单测。 */
+/** 占位拉起语(host followup 进 parent inbox,模型照做即调 hold 占住 turn)。纯函数,可单测。
+ * sessionId 裸写不带引号:模型照抄带引号的 id 会把引号当成 id 的一部分
+ * (executeHoldTool 侧另有剥离兜底,双保险)。
+ */
 export function holdPromptOf(sessionId: string): string {
-  return `辩论已在后台启动(会话 ${sessionId})。请只做一件事:调用 ${HOLD_TOOL_NAME} 工具(sessionId="${sessionId}"),不要输出别的,不要论证。调用挂起期间=前台运行态,辩论结束工具即返回,你再收尾。`
+  return `辩论已在后台启动,会话 id 是 ${sessionId}。请只做一件事:调用 ${HOLD_TOOL_NAME} 工具,把 ${sessionId} 填进 sessionId 参数,不要输出别的,不要论证。调用挂起期间=前台运行态,辩论结束工具即返回,你再收尾。`
 }
 
 /** 后台 settlement 后收前台占位 turn(无僵尸):cancel 只停 turn,keepInbox 留住用户消息。
@@ -973,10 +976,12 @@ export async function executeHoldTool(
   exec: { agent?: unknown; signal: AbortSignal },
 ): Promise<string> {
   const a = (args ?? {}) as { sessionId?: unknown }
-  if (typeof a.sessionId !== 'string' || a.sessionId === '') throw new Error('requires sessionId')
+  // 模型照抄拉起语里的 id 时可能带上引号/空白,先剥一层再查表(拉起语本身已裸写,双保险)。
+  const rawId = typeof a.sessionId === 'string' ? a.sessionId.trim().replace(/^["'“”]+|["'“”]+$/g, '').trim() : ''
+  if (rawId === '') throw new Error('requires sessionId')
   if (!exec.signal) throw new Error('hold tool requires exec.signal (host wiring broken)')
-  const session = sessions.get(a.sessionId)
-  if (!session) throw new Error(`unknown debate session: ${a.sessionId}`)
+  const session = sessions.get(rawId)
+  if (!session) throw new Error(`unknown debate session: ${rawId}`)
   if (shouldHoldResolve(session.status)) return holdReturnTextOf(session)
   const signal = exec.signal
   try {
