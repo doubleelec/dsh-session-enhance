@@ -15,3 +15,5 @@ Status: in_progress
   4. 收 turn：正常跑完 → 占位 turn 自动收，前台回 idle，结论落对话区 + 面板
 - [x] 探针路由删除（T1 选项 a：`debug-followup`/`debug-parent` + 面板按钮已删）
 - [x] 术语小改（"会话接管"→"双停与可观测"，docs 同步）+ vitest/pytest/arch 全绿
+- [x] 非目标确认：对话框不自动关闭（spec Out of Scope）——收尾只 cancel 占位
+  turn，对话框由用户手动关；真跑验证不验此项
