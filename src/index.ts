@@ -76,6 +76,13 @@ export function shouldHoldResolve(status: DebateStatus): boolean {
   return status !== 'running'
 }
 
+/**
+ * hold 工具注册实况(ADR-0027):注册成功与否 + 失败原因。
+ * 静默失败会让整条占位链消失而无人知晓,所以状态经 /api/version 暴露。
+ */
+let holdToolRegistered = false
+let holdToolError: string | null = null
+
 /** hold 返回文案(纯函数,给模型一个可讲的收尾,不灌全文)。 */
 export function holdReturnTextOf(session: { id: string; status: DebateStatus; config?: { auto?: { question?: string } | null } }): string {
   const q = session.config?.auto?.question
@@ -2045,7 +2052,13 @@ export default {
           // 旧进程没有这条路由(404),面板据此也能判定"后台是旧的"。
           const facts = await versionFacts()
           const verdict = assessVersions(facts)
-          return writeJson(res, { ok: true, ...facts, ...verdict })
+          return writeJson(res, {
+            ok: true,
+            ...facts,
+            ...verdict,
+            // 占位工具注册实况:静默失败会让整条前台占位链消失,必须一眼可见。
+            holdTool: { name: HOLD_TOOL_NAME, registered: holdToolRegistered, error: holdToolError },
+          })
         },
       },
       {
@@ -2849,20 +2862,35 @@ export default {
     // parameters 用 DSL 写法({ sessionId: { type:'string', required:true, description } }),
     // 不能套 JSON Schema 的 { type:'object', properties } 壳(编译器按 DSL 编译,壳被拒);
     // output.render 必需(缺了 register 抛 TypeError);tools 已进 inject(顶部)。
+    //
+    // 注册结果必须可观测:旧写法(可选链 + 外层 catch)会在"tools 服务没注入"时
+    // 静默不注册(catch 都不触发),占位链整体失效却查不出原因
+    // (2026-10-30 实测踩到:profile 装的是旧副本,同时注册失败无人知)。
+    // 现在:缺服务显式记原因、抛错记原因,/api/version 暴露 holdTool 状态。
     try {
-      ctx.tools?.register(defineTool({
-        name: HOLD_TOOL_NAME,
-        description: '前台占位:辩论在后台跑,本 turn 只等结论。调用即挂起直到辩论结束,不做论证;用户点停即双停。',
-        parameters: {
-          sessionId: { type: 'string', required: true, description: '面板建单返回的 id' },
-        },
-        output: {
-          schema: { type: 'string' },
-          render: (_args, value) => [{ type: 'text', text: String(value) }],
-        },
-        execute: async (args, exec) => executeHoldTool(args, exec),
-      }))
-    } catch { /* 占位工具挂不上只降级为 mirror+面板,不拦路由注册 */ }
+      if (!ctx.tools) {
+        holdToolError = 'tools service unavailable (inject missing or not applied)'
+      } else {
+        ctx.tools.register(defineTool({
+          name: HOLD_TOOL_NAME,
+          description: '前台占位:辩论在后台跑,本 turn 只等结论。调用即挂起直到辩论结束,不做论证;用户点停即双停。',
+          parameters: {
+            sessionId: { type: 'string', required: true, description: '面板建单返回的 id' },
+          },
+          output: {
+            schema: { type: 'string' },
+            render: (_args, value) => [{ type: 'text', text: String(value) }],
+          },
+          execute: async (args, exec) => executeHoldTool(args, exec),
+        }))
+        holdToolRegistered = true
+        holdToolError = null
+      }
+    } catch (e) {
+      // 挂不上仍不拦路由注册(降级为 mirror+面板),但原因必须留在可读处。
+      holdToolRegistered = false
+      holdToolError = e instanceof Error ? e.message : String(e)
+    }
 
     // 装载上一进程留下的局(ADR-0019)。后台做,不挡路由注册:
     // 面板在装载完成前轮询旧 id 会拿到一次 unknown-id,那是可接受的过渡态。
