@@ -748,7 +748,8 @@
   opacity: 1;
 }
 
-/* 最小化胶囊:右下角一条,呼吸灯表运行态,点恢复 */
+/* 最小化胶囊:右下角一条,呼吸灯表运行态,点恢复。
+   硬上限防盖按钮:再长的状态词也只露一行,超出省略(完整说明走 title 悬停)。 */
 .dshe-mini {
   position: fixed;
   right: 24px;
@@ -765,6 +766,10 @@
   cursor: pointer;
   font-size: 13px;
   z-index: 60;
+  max-width: 40vw;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .dshe-mini:hover {
   border-color: var(--dsw-alias-state-business-primary, #4176e6);

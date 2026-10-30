@@ -83,7 +83,7 @@ const DICTS: Record<string, Record<string, string>> = {
     'version': '版本 v{ver}',
     'btn.fullscreen': '全屏', 'btn.unfullscreen': '退出全屏', 'btn.minimize': '最小化',
     'btn.restore': '恢复', 'resize.tip': '右下角拖拽调整大小,双击恢复默认',
-    'minimized.running': '辩论进行中…', 'minimized.done': '辩论已结束',
+    'minimized.running': '辩论进行中', 'minimized.done': '辩论已结束',
     'role.builder': '建构方', 'role.challenger': '挑战方', 'role.synthesizer': '制图员',
     'round.opening': '开题', 'round.map': '成果地图', 'round.n': '第{n}轮',
     'stream.writing': '正在写…', 'stream.tools': '正在调工具…',
@@ -144,7 +144,7 @@ const DICTS: Record<string, Record<string, string>> = {
     'version': 'Version v{ver}',
     'btn.fullscreen': 'Fullscreen', 'btn.unfullscreen': 'Exit fullscreen', 'btn.minimize': 'Minimize',
     'btn.restore': 'Restore', 'resize.tip': 'Drag from the corner to resize, double-click to reset',
-    'minimized.running': 'Deliberation running…', 'minimized.done': 'Deliberation finished',
+    'minimized.running': 'Deliberating', 'minimized.done': 'Deliberation finished',
     'role.builder': 'Builder', 'role.challenger': 'Challenger', 'role.synthesizer': 'Synthesizer',
     'round.opening': 'Opening', 'round.map': 'Result map', 'round.n': 'Round {n}',
     'stream.writing': 'writing…', 'stream.tools': 'calling tools…',
@@ -743,11 +743,13 @@ function DebateDialog(props: { onClose: () => void; useSessions?: (s: unknown) =
   if (minimized) {
     const miniLabel = status === 'running' ? tr('minimized.running') : status === 'done' ? tr('minimized.done') : tr(`st.${status}`)
     // 胶囊只露短词(右下角 fixed,长文案会盖住发送/停止按钮);完整占位状态只在面板里看。
-    const miniHold = status === 'running' && placeholderRaised !== undefined ? (placeholderRaised ? ` · ${tr('hold.miniOn')}` : ` · ${tr('hold.miniOff')}`) : ''
+    // 长串说明文字一律丢进 title(悬停可见),胶囊本体只留状态词 + 版本号。
+    const miniHoldKey = status === 'running' && placeholderRaised !== undefined ? (placeholderRaised ? 'hold.miniOn' : 'hold.miniOff') : null
+    const miniTitle = [miniLabel, miniHoldKey ? tr(miniHoldKey) : null, versionTip].filter(Boolean).join(' · ')
     return (
-      <button className={C('dshe-mini')} onClick={() => setMinimized(false)} title={tr('btn.restore')} aria-label={tr('btn.restore')}>
+      <button className={C('dshe-mini')} onClick={() => setMinimized(false)} title={miniTitle} aria-label={tr('btn.restore')}>
         <span className={C(status === 'running' ? 'dot-live' : 'dot-done')} />
-        <span>⚔ {miniLabel}{miniHold}</span>
+        <span>⚔ {miniLabel}{miniHoldKey ? ` · ${tr(miniHoldKey)}` : ''}</span>
         <span className={C('dshe-version') + (versionWarn !== null ? ` ${C('dshe-version-warn')}` : '')} title={versionTip}>{versionText}{versionWarn !== null ? ' ⚠' : ''}</span>
       </button>
     )
