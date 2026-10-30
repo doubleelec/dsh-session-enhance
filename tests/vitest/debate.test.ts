@@ -1587,6 +1587,31 @@ describe('ADR-0027 前台占位 hold', () => {
     expect(holdReturnTextOf({ id: 'se-1', status: 'stopped' })).toContain('已中止')
     expect(holdReturnTextOf({ id: 'se-1', status: 'failed' })).toContain('已失败')
   })
+  it('holdReturnTextOf:done 带轮次小结 + 结论(会话区主节点),超限截断', () => {
+    const text = holdReturnTextOf({
+      id: 'se-1', status: 'done',
+      config: { auto: { question: '补吗?' } },
+      rounds: [
+        { round: 1, builderAgree: false, challengerAgree: false, builderAnswer: '先铺四候选', challengerAnswer: '打脸前提' },
+        { round: 2, builderAgree: true, challengerAgree: true, builderAnswer: '都不补', challengerAnswer: '都不补' },
+      ],
+      stopReason: 'convergence',
+      decisionSummary: '## 决策摘要\n都不补,维持一份。',
+    })
+    expect(text).toContain('R1 ⚔️仍有分歧: 先铺四候选')
+    expect(text).toContain('R2 ✅双方一致: 都不补')
+    expect(text).toContain('共识收敛')
+    expect(text).toContain('都不补,维持一份。')
+    // 空 rounds 不炸,退化为面板指引。
+    expect(holdReturnTextOf({ id: 'se-1', status: 'done' })).toContain('面板')
+    // 答案超长截断,不灌全文。
+    const long = holdReturnTextOf({
+      id: 'se-1', status: 'done',
+      rounds: [{ round: 1, builderAgree: false, challengerAgree: false, builderAnswer: `x`.repeat(200), challengerAnswer: '' }],
+    })
+    expect(long).toContain('…')
+    expect(long.length).toBeLessThan(200 + 400)
+  })
   it('holdPromptOf:拉起语点名 hold 工具 + sessionId(裸写不带引号);首句标题态', () => {
     const p = holdPromptOf('se-9')
     expect(p).toContain(HOLD_TOOL_NAME)

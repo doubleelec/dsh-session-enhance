@@ -83,13 +83,49 @@ export function shouldHoldResolve(status: DebateStatus): boolean {
 let holdToolRegistered = false
 let holdToolError: string | null = null
 
-/** hold 返回文案(纯函数,给模型一个可讲的收尾,不灌全文)。 */
-export function holdReturnTextOf(session: { id: string; status: DebateStatus; config?: { auto?: { question?: string } | null } }): string {
+/** hold 返回文案(纯函数,给模型一个可讲的收尾,不灌全文)。
+ * B 路线(会话区主节点):收尾带轮次小结 + 终局结论——模型在占位 turn 里照发,
+ * assistant 身份自然留在会话区;过程细节仍走 mirror(轨迹区),各得其所。
+ * 每轮一行:轮号 + 双方倾向(✅/⏳) + 收敛答案(首选建构者答案,空则挑战者)。
+ * 结论优先 decisionSummary(制图「决策摘要」,已是人话);缺则回退到末轮答案。
+ * 行数上限防超长:maxRounds 兜底也只列后 N 轮,前面一句带过。
+ */
+export function holdReturnTextOf(session: {
+  id: string
+  status: DebateStatus
+  config?: { auto?: { question?: string } | null }
+  rounds?: Array<{ round: number; builderAgree: boolean; challengerAgree: boolean; builderAnswer: string; challengerAnswer: string }>
+  stopReason?: string | null
+  decisionSummary?: string | null
+}): string {
   const q = session.config?.auto?.question
   const what = q !== undefined && q !== '' ? `「${q}」` : `会话 ${session.id}`
-  if (session.status === 'done') return `辩论已结束${what},结论见对话区收尾与面板成果地图,本占位 turn 收。`
   if (session.status === 'stopped') return `辩论已中止${what}(用户点了停止/双停),本占位 turn 收。`
-  return `辩论已失败${what},错误见面板 state,本占位 turn 收。`
+  if (session.status !== 'done') {
+    const err = (session as { error?: unknown }).error
+    const why = typeof err === 'string' && err !== '' ? `(${err})` : ''
+    return `辩论已失败${what}${why},错误见面板 state,本占位 turn 收。`
+  }
+  const rounds = Array.isArray(session.rounds) ? session.rounds : []
+  const MAX_ROUNDS_SHOWN = 5
+  const tail = rounds.slice(-MAX_ROUNDS_SHOWN)
+  const head = rounds.length > tail.length ? `前面 ${rounds.length - tail.length} 轮见面板 transcript,最近 ${tail.length} 轮小结:\n` : ''
+  const lines = tail.map((r) => {
+    const ans = (r.builderAnswer ?? '').trim() !== '' ? r.builderAnswer.trim() : (r.challengerAnswer ?? '').trim()
+    const short = ans.length > 80 ? `${ans.slice(0, 79)}…` : ans
+    const mark = r.builderAgree && r.challengerAgree ? '✅双方一致' : r.builderAgree || r.challengerAgree ? '⏳一方让步' : '⚔️仍有分歧'
+    return `R${r.round} ${mark}: ${short !== '' ? short : '(无答案,见面板)'}`
+  })
+  const verdict = typeof session.decisionSummary === 'string' && session.decisionSummary.trim() !== ''
+    ? session.decisionSummary.trim().split('\n').slice(0, 12).join('\n')
+    : (tail.length > 0 ? tail[tail.length - 1]!.builderAnswer.trim() || tail[tail.length - 1]!.challengerAnswer.trim() : '')
+  const stopWord = session.stopReason === 'convergence' ? '共识收敛' : session.stopReason === 'saturation' ? '覆盖饱和' : session.stopReason === 'maxRounds' ? '跑满轮次' : session.stopReason === 'manual' ? '手动提前制图' : null
+  return [
+    `辩论已结束${what}${stopWord ? `(${stopWord})` : ''}。轮次小结:`,
+    head + (lines.length > 0 ? lines.join('\n') : '(无交锋轮,见面板 transcript)'),
+    verdict !== '' ? `结论:\n${verdict}` : '结论见面板成果地图。',
+    '全文与证据链见面板 transcript,结论文档路径见面板 state,本占位 turn 收。',
+  ].join('\n')
 }
 
 /** 占位拉起语(host followup 进 parent inbox,模型照做即调 hold 占住 turn)。纯函数,可单测。
