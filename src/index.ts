@@ -95,14 +95,21 @@ export function holdReturnTextOf(session: { id: string; status: DebateStatus; co
 /** 占位拉起语(host followup 进 parent inbox,模型照做即调 hold 占住 turn)。纯函数,可单测。
  * sessionId 裸写不带引号:模型照抄带引号的 id 会把引号当成 id 的一部分
  * (executeHoldTool 侧另有剥离兜底,双保险)。
+ * 首句即标题态("开放辩论:〈问题〉…"):宿主按首轮内容自动起会话标题时,
+ * 拿到的就是一句人话标题,而不是"前台挂起等待辩论结束"这种工具自述。
  */
-export function holdPromptOf(sessionId: string): string {
-  return `辩论已在后台启动,会话 id 是 ${sessionId}。请只做一件事:调用 ${HOLD_TOOL_NAME} 工具,把 ${sessionId} 填进 sessionId 参数,不要输出别的,不要论证。调用挂起期间=前台运行态,辩论结束工具即返回,你再收尾。`
+export function holdPromptOf(sessionId: string, question?: string): string {
+  const q = typeof question === 'string' && question.trim() !== '' ? `「${question.trim()}」` : null
+  const head = q !== null ? `开放辩论${q}已在后台启动,会话 id 是 ${sessionId}。` : `开放辩论已在后台启动,会话 id 是 ${sessionId}。`
+  return `${head}请只做一件事:调用 ${HOLD_TOOL_NAME} 工具,把 ${sessionId} 填进 sessionId 参数,不要输出别的,不要论证。调用挂起期间=前台运行态,辩论结束工具即返回,你再收尾。`
 }
 
 /** 后台 settlement 后收前台占位 turn(无僵尸):cancel 只停 turn,keepInbox 留住用户消息。
  * 没拉起过占位(placeholderRaised=false)的局直接跳过:对没起过 turn 的 parent
  * 调 cancel 语义是空操作,但"没拉起就不收"更干净,也不污染 mirror/审计。
+ * 收尾让位:先唤醒 hold 等待者拿结算文案自我收尾,等一个宏任务再 cancel——
+ * 同 tick 内 cancel 会把 hold 的 tool call 记成 aborted(2026-10-30 实测:
+ * 辩论正常 done,GUI 却显示"工具调用失败 Error: tool call aborted")。
  */
 export function closePlaceholderTurn(parent: unknown, session: { parentSid: string | null; placeholderRaised?: boolean }): { closed: boolean; reason: string | null } {
   try {
@@ -1238,7 +1245,7 @@ export async function runHostDebate(
         parent.followup({
           id: `se-hold-${session.id}`,
           role: 'user',
-          content: [{ type: 'text', text: holdPromptOf(session.id) }],
+          content: [{ type: 'text', text: holdPromptOf(session.id, auto.question) }],
           source: { kind: 'user' },
         })
         session.placeholderRaised = true
@@ -1478,12 +1485,21 @@ export async function runHostDebate(
       mirror(parent, session, `⚠️ 结论文档没能落盘(${session.reportError});完整记录仍在辩论面板里。`)
     }
     await persist(ctx, session)
-    // 前台占位收尾(ADR-0027):先唤醒 hold 等待者拿结算文案自我收尾,再显式
-    // cancel 前台 turn(有等待者也照收——模型不收 turn 就僵尸,宿主 cancel 即
-    // turn-stopping,hold 的 abort 路径正好走双停,不留"前台转、后台停"分叉)。
+    // 前台占位收尾(ADR-0027):先唤醒 hold 等待者拿结算文案自我收尾,等一个宏任务
+    // 再 cancel 收 turn——同 tick 内 cancel 会把 hold 的 tool call 记成 aborted
+    // (2026-10-30 实测:辩论正常 done,GUI 却显示"工具调用失败")。
     try {
       notifyHoldSettled(session.id)
-      closePlaceholderTurn(parent, session)
+      const p = parent as { cancel?: (cause: unknown, opts?: unknown) => void } | null | undefined
+      if (session.placeholderRaised !== false && session.parentSid && p && typeof p.cancel === 'function') {
+        const doClose = (): void => {
+          try { closePlaceholderTurn(parent, session) } catch { /* 收尾失败不掩盖辩论结果 */ }
+        }
+        try {
+          if (typeof setTimeout === 'function') setTimeout(doClose, 0)
+          else doClose()
+        } catch { doClose() }
+      }
     } catch { /* 收尾失败不掩盖辩论结果 */ }
     done()
   } catch (err) {
@@ -1497,9 +1513,19 @@ export async function runHostDebate(
     // 失败/中止也要落盘:面板重启后还能看到"这局挂在哪",否则只剩一个丢失的 id。
     await persist(ctx, session)
     // 前台占位收尾(ADR-0027):中止也是 settlement,唤醒 hold(持 turn 者拿 stopped 文案收)后再 cancel 收 turn,不留僵尸。
+    // 同样让一个宏任务:用户点的停,hold 的 aborted 是真实的,但 cancel 本身不再抢 tool call 的结算显示。
     try {
       notifyHoldSettled(session.id)
-      closePlaceholderTurn(parent, session)
+      const p = parent as { cancel?: (cause: unknown, opts?: unknown) => void } | null | undefined
+      if (session.placeholderRaised !== false && session.parentSid && p && typeof p.cancel === 'function') {
+        const doClose = (): void => {
+          try { closePlaceholderTurn(parent, session) } catch { /* 收尾失败不掩盖落盘结果 */ }
+        }
+        try {
+          if (typeof setTimeout === 'function') setTimeout(doClose, 0)
+          else doClose()
+        } catch { doClose() }
+      }
     } catch { /* 收尾失败不掩盖落盘结果 */ }
     done()
   } finally {

@@ -1587,11 +1587,18 @@ describe('ADR-0027 前台占位 hold', () => {
     expect(holdReturnTextOf({ id: 'se-1', status: 'stopped' })).toContain('已中止')
     expect(holdReturnTextOf({ id: 'se-1', status: 'failed' })).toContain('已失败')
   })
-  it('holdPromptOf:拉起语点名 hold 工具 + sessionId(裸写不带引号)', () => {
+  it('holdPromptOf:拉起语点名 hold 工具 + sessionId(裸写不带引号);首句标题态', () => {
     const p = holdPromptOf('se-9')
     expect(p).toContain(HOLD_TOOL_NAME)
     expect(p).toContain('se-9')
     expect(p).not.toContain('"se-9"')
+    // 无问题时首句仍是开放辩论标题态,不拿工具自述当标题。
+    expect(p.startsWith('开放辩论')).toBe(true)
+    // 有问题时首句带问题:宿主自动标题取首句即人话标题。
+    const pq = holdPromptOf('se-9', 'live要补module吗?')
+    expect(pq.startsWith('开放辩论「live要补module吗?」')).toBe(true)
+    expect(pq).toContain('se-9')
+    expect(pq).not.toContain('"se-9"')
   })
   it('mirrorSourceOf:plugin 自有 kind notice,不冒充用户;summary 取首行超限截断', () => {
     expect(MIRROR_SOURCE_KIND).toBe('plugin:dsh-session-enhance')
