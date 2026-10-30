@@ -46,7 +46,7 @@ import {
   type DebateRound,
   type TranscriptEntry,
 } from '../../src/debate/debate'
-import { normalizeConfig, extractModelEcho, isRouteIneffective, resolveAuto, settledDefsOf, settledItemsOfSession, stepOpen, stepRound, stepSynthesize, sessions, __testControllers, stepOpenResident, stepRoundResident, stepOpenSingle, stepRoundSingle, buildDebateForkSeed, createSingleThread, recordRoundAndJudge, interruptMarkOf, parentBusyOf, interruptPlanOf, interruptParentErrorOf, HOLD_TOOL_NAME, shouldHoldResolve, holdReturnTextOf, holdPromptOf, closePlaceholderTurn, waitForDebateSettlement, notifyHoldSettled, executeHoldTool, mirrorSourceOf, MIRROR_SOURCE_KIND, MIRROR_SUMMARY_MAX } from '../../src/index'
+import { normalizeConfig, extractModelEcho, isRouteIneffective, resolveAuto, settledDefsOf, settledItemsOfSession, stepOpen, stepRound, stepSynthesize, sessions, __testControllers, stepOpenResident, stepRoundResident, stepOpenSingle, stepRoundSingle, buildDebateForkSeed, createSingleThread, recordRoundAndJudge, interruptMarkOf, parentBusyOf, interruptPlanOf, interruptParentErrorOf, HOLD_TOOL_NAME, shouldHoldResolve, holdReturnTextOf, holdRoundLineOf, holdRoundTextOf, holdPromptOf, holdSettledRoundOf, closePlaceholderTurn, waitForDebateSettlement, notifyHoldSettled, executeHoldTool, mirrorSourceOf, MIRROR_SOURCE_KIND, MIRROR_SUMMARY_MAX } from '../../src/index'
 import { toolAllowFor, resolveToolAllow, cageLabel, visibleNamesOf, scopedToolGuard, turnVerdict, DEBATER_TOOL_ALLOW, SYNTH_TOOL_ALLOW, STEP_STALL_MS, STEP_HARD_CAP_MS } from '../../src/host/cage'
 import { extractHandoffConclusion, heartbeatOf, epochStopReason, epochStopDetail, isRetriableTurnError, driveResidentTurn, createResidentPair } from '../../src/host/resident'
 import { settledItemsOf } from '../../src/debate/debate'
@@ -1624,6 +1624,69 @@ describe('ADR-0027 前台占位 hold', () => {
     expect(pq.startsWith('开放辩论「live要补module吗?」')).toBe(true)
     expect(pq).toContain('se-9')
     expect(pq).not.toContain('"se-9"')
+    // 循环协议:waitRound 水位 + 每轮小结发会话区 + 终局收尾,三件套缺一即断约。
+    expect(p).toContain('waitRound')
+    expect(p).toContain('会话区')
+    expect(p).toContain('终局')
+  })
+  it('holdRoundLineOf/holdRoundTextOf:按轮小结与终局行格式同形,不灌全文', () => {
+    const rec = { round: 2, builderAgree: true, challengerAgree: true, builderAnswer: '都不补', challengerAnswer: '都不补' }
+    // 终局行与按轮行同一函数成形,两处文案永不同形。
+    expect(holdRoundLineOf(rec)).toBe('R2 ✅双方一致: 都不补')
+    expect(holdRoundLineOf({ round: 1, builderAgree: true, challengerAgree: false, builderAnswer: '', challengerAnswer: '' })).toContain('⏳一方让步')
+    // 交锋轮文案:带 R 行 + waitRound 续调指引。
+    const rt = holdRoundTextOf({ id: 'se-1', status: 'running', rounds: [rec] }, 2, false)
+    expect(rt).toContain('R2 ✅双方一致: 都不补')
+    expect(rt).toContain('waitRound 填 2')
+    // 开题文案:transcript 首段拼底料,指引等第 1 轮。
+    const ot = holdRoundTextOf({
+      id: 'se-1', status: 'running',
+      transcript: [
+        { role: 'builder', round: 0, text: '建构主张 A' },
+        { role: 'challenger', round: 0, text: '挑战主张 B' },
+      ],
+    }, 0, true)
+    expect(ot).toContain('开题')
+    expect(ot).toContain('建构主张 A')
+    expect(ot).toContain('挑战主张 B')
+    expect(ot).toContain('waitRound 填 0')
+    // 缺记录不炸,退化为面板指引 + 续调。
+    const miss = holdRoundTextOf({ id: 'se-1', status: 'running', rounds: [] }, 3, false)
+    expect(miss).toContain('面板')
+    expect(miss).toContain('waitRound 填 3')
+  })
+  it('waitForDebateSettlement:按轮水位——已超直接过,未达挂起,落定走 settled', async () => {
+    const r = normalizeConfig({ maxRounds: 2 })
+    if (!('config' in r)) throw new Error('bad config')
+    const mk = (status: 'running' | 'done', round: number) => ({
+      id: `w-${status}-${round}-${Math.random()}`, config: r.config, status, round,
+      transcript: [] as TranscriptEntry[], map: null, mapText: null, error: null, mirrorToChat: false,
+      progress: '', mirrorCount: 0, mirrorError: null, parentSid: null, stopReason: null, rounds: [] as DebateRound[],
+      mode: 'oneShot' as const, residentError: null, cageNote: null, interruptedAt: null, parentBusy: null, streaming: {}, decisionSummary: null,
+      reportRel: null, persistError: null, reportError: null, sweepError: null, sweptSessions: [], restored: false,
+      createdAt: 0, updatedAt: 0,
+    })
+    // 落定局水位 Infinity:任何 waitRound 都走 settled。
+    expect(holdSettledRoundOf(mk('done', 2))).toBe(Number.POSITIVE_INFINITY)
+    expect(holdSettledRoundOf(mk('running', 1))).toBe(1)
+    const s = mk('running', 1)
+    sessions.set(s.id, s)
+    try {
+      // 水位 1 > 已见 -1:直接过,不挂起。
+      const now = await waitForDebateSettlement(s.id, new AbortController().signal, -1)
+      expect(now).toEqual({ settled: false, round: 1, opening: false })
+      // 水位 1 == 已见 1:挂起;唤醒后仍是同一轮(误唤醒不推进水位)。
+      const ctl = new AbortController()
+      const p = waitForDebateSettlement(s.id, ctl.signal, 1)
+      expect(notifyHoldSettled(s.id)).toBe(1)
+      expect(await p).toEqual({ settled: false, round: 1, opening: false })
+      // 落定后唤醒走 settled。
+      s.status = 'done'
+      const fin = await waitForDebateSettlement(s.id, new AbortController().signal, 1)
+      expect(fin).toEqual({ settled: true })
+    } finally {
+      sessions.delete(s.id)
+    }
   })
   it('mirrorSourceOf:plugin 自有 kind notice,不冒充用户;summary 取首行超限截断', () => {
     expect(MIRROR_SOURCE_KIND).toBe('plugin:dsh-session-enhance')
@@ -1702,6 +1765,30 @@ describe('ADR-0027 前台占位 hold', () => {
       sessions.delete(s.id)
     }
   })
+  it('executeHoldTool:running 水位已超直接回本轮小结,不挂起', async () => {
+    const r = normalizeConfig({ maxRounds: 2 })
+    if (!('config' in r)) throw new Error('bad config')
+    const s = {
+      id: 'hold-ut4', config: r.config, status: 'running' as const, round: 2,
+      transcript: [] as TranscriptEntry[], map: null, mapText: null, error: null, mirrorToChat: false,
+      progress: '', mirrorCount: 0, mirrorError: null, parentSid: null, stopReason: null,
+      rounds: [
+        { round: 2, builderAgree: true, challengerAgree: true, builderAnswer: '都不补', challengerAnswer: '都不补' },
+      ] as unknown as DebateRound[],
+      mode: 'oneShot' as const, residentError: null, cageNote: null, interruptedAt: null, parentBusy: null, streaming: {}, decisionSummary: null,
+      reportRel: null, persistError: null, reportError: null, sweepError: null, sweptSessions: [], restored: false,
+      createdAt: 0, updatedAt: 0,
+    }
+    sessions.set(s.id, s)
+    try {
+      // waitRound -1 < 水位 2:直接回 R2 小结 + 续调指引,不挂起。
+      const text = await executeHoldTool({ sessionId: s.id, waitRound: -1 }, { signal: new AbortController().signal })
+      expect(text).toContain('R2 ✅双方一致')
+      expect(text).toContain('waitRound 填 2')
+    } finally {
+      sessions.delete(s.id)
+    }
+  })
   it('executeHoldTool:running 挂起可被 abort 打断(双停:后台 controllers 跟停)', async () => {
     const r = normalizeConfig({ maxRounds: 2 })
     if (!('config' in r)) throw new Error('bad config')
@@ -1718,7 +1805,8 @@ describe('ADR-0027 前台占位 hold', () => {
     __testControllers.set(s.id, bg)
     try {
       const ctl = new AbortController()
-      const p = executeHoldTool({ sessionId: s.id }, { signal: ctl.signal })
+      // waitRound 与水位持平(1==1)才真挂起:缺省 -1 在水位 1 下会直接返回,不再挂起。
+      const p = executeHoldTool({ sessionId: s.id, waitRound: 1 }, { signal: ctl.signal })
       ctl.abort()
       await expect(p).rejects.toThrow('aborted')
       // 双停关键一跳:前台 abort 必须把后台 controllers 也 abort 掉,不能只停前台。

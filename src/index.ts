@@ -83,10 +83,74 @@ export function shouldHoldResolve(status: DebateStatus): boolean {
 let holdToolRegistered = false
 let holdToolError: string | null = null
 
+/** 单轮小结行(hold 终局文案与按轮唤醒文案共用,ADR-0014 一处成形,两处同形)。
+ * mark:双方倾向;答案首选建构者、空则挑战者;超 80 字截断。
+ */
+export function holdRoundLineOf(r: { round: number; builderAgree: boolean; challengerAgree: boolean; builderAnswer: string; challengerAnswer: string }): string {
+  const ans = (r.builderAnswer ?? '').trim() !== '' ? r.builderAnswer.trim() : (r.challengerAnswer ?? '').trim()
+  const short = ans.length > 80 ? `${ans.slice(0, 79)}…` : ans
+  const mark = r.builderAgree && r.challengerAgree ? '✅双方一致' : r.builderAgree || r.challengerAgree ? '⏳一方让步' : '⚔️仍有分歧'
+  return `R${r.round} ${mark}: ${short !== '' ? short : '(无答案,见面板)'}`
+}
+
+/** 单轮唤醒文案(纯函数):后台每完成一轮就唤醒 hold,模型把这条小结发到会话区
+ * (assistant 身份,自然成为会话区主节点),再调 hold 等下一轮(waitRound 填本轮)。
+ * opening=true 是开题完成(round 0):transcript 里取双方开题首段拼小结底料。
+ * 内容全部来自 rounds/transcript,不灌全文;超长截断。
+ */
+export function holdRoundTextOf(
+  session: {
+    id: string
+    status: DebateStatus
+    config?: { auto?: { question?: string } | null }
+    rounds?: Array<{ round: number; builderAgree: boolean; challengerAgree: boolean; builderAnswer: string; challengerAnswer: string }>
+    transcript?: Array<{ role: string; round: number; text: string }>
+  },
+  round: number,
+  opening: boolean,
+): string {
+  const q = session.config?.auto?.question
+  const what = q !== undefined && q !== '' ? `「${q}」` : `会话 ${session.id}`
+  const clipped = (t: string, n: number): string => {
+    const s = (t ?? '').trim().split('\n')[0] ?? ''
+    return s.length > n ? `${s.slice(0, n - 1)}…` : s
+  }
+  if (opening) {
+    const tx = Array.isArray(session.transcript) ? session.transcript : []
+    const findLast = (role: string): string => {
+      for (let i = tx.length - 1; i >= 0; i--) {
+        const e = tx[i]
+        if (e && e.role === role && e.round === 0) return e.text ?? ''
+      }
+      return ''
+    }
+    const b = clipped(findLast('builder'), 60)
+    const c = clipped(findLast('challenger'), 60)
+    return [
+      `开题已出${what}(双方互盲,立场已铺开):`,
+      `建构者: ${b !== '' ? b : '(见面板 transcript)'}`,
+      `挑战者: ${c !== '' ? c : '(见面板 transcript)'}`,
+      '你把开题小结(2-3 行:双方各什么主张)发到会话区,再调 hold 工具等第 1 轮(waitRound 填 0)。',
+    ].join('\n')
+  }
+  const rounds = Array.isArray(session.rounds) ? session.rounds : []
+  const rec = rounds.find((r) => r.round === round)
+  if (!rec) {
+    return [
+      `第 ${round} 轮刚结束${what},但本轮判定记录缺失(见面板 transcript)。`,
+      `你发一条"第 ${round} 轮已结束,详情见面板"到会话区,再调 hold 工具等下一轮(waitRound 填 ${round})。若工具直接返回终局文案,照终局收尾。`,
+    ].join('\n')
+  }
+  return [
+    `第 ${round} 轮小结${what}:`,
+    holdRoundLineOf(rec),
+    `你把这条小结发到会话区(照抄或 2-3 行复述),再调 hold 工具等下一轮(waitRound 填 ${round})。若工具直接返回终局文案,照终局收尾。`,
+  ].join('\n')
+}
+
 /** hold 返回文案(纯函数,给模型一个可讲的收尾,不灌全文)。
  * B 路线(会话区主节点):收尾带轮次小结 + 终局结论——模型在占位 turn 里照发,
  * assistant 身份自然留在会话区;过程细节仍走 mirror(轨迹区),各得其所。
- * 每轮一行:轮号 + 双方倾向(✅/⏳) + 收敛答案(首选建构者答案,空则挑战者)。
  * 结论优先 decisionSummary(制图「决策摘要」,已是人话);缺则回退到末轮答案。
  * 行数上限防超长:maxRounds 兜底也只列后 N 轮,前面一句带过。
  */
@@ -110,12 +174,7 @@ export function holdReturnTextOf(session: {
   const MAX_ROUNDS_SHOWN = 5
   const tail = rounds.slice(-MAX_ROUNDS_SHOWN)
   const head = rounds.length > tail.length ? `前面 ${rounds.length - tail.length} 轮见面板 transcript,最近 ${tail.length} 轮小结:\n` : ''
-  const lines = tail.map((r) => {
-    const ans = (r.builderAnswer ?? '').trim() !== '' ? r.builderAnswer.trim() : (r.challengerAnswer ?? '').trim()
-    const short = ans.length > 80 ? `${ans.slice(0, 79)}…` : ans
-    const mark = r.builderAgree && r.challengerAgree ? '✅双方一致' : r.builderAgree || r.challengerAgree ? '⏳一方让步' : '⚔️仍有分歧'
-    return `R${r.round} ${mark}: ${short !== '' ? short : '(无答案,见面板)'}`
-  })
+  const lines = tail.map(holdRoundLineOf)
   const verdict = typeof session.decisionSummary === 'string' && session.decisionSummary.trim() !== ''
     ? session.decisionSummary.trim().split('\n').slice(0, 12).join('\n')
     : (tail.length > 0 ? tail[tail.length - 1]!.builderAnswer.trim() || tail[tail.length - 1]!.challengerAnswer.trim() : '')
@@ -137,7 +196,8 @@ export function holdReturnTextOf(session: {
 export function holdPromptOf(sessionId: string, question?: string): string {
   const q = typeof question === 'string' && question.trim() !== '' ? `「${question.trim()}」` : null
   const head = q !== null ? `开放辩论${q}已在后台启动,会话 id 是 ${sessionId}。` : `开放辩论已在后台启动,会话 id 是 ${sessionId}。`
-  return `${head}请只做一件事:调用 ${HOLD_TOOL_NAME} 工具,把 ${sessionId} 填进 sessionId 参数,不要输出别的,不要论证。调用挂起期间=前台运行态,辩论结束工具即返回,你再收尾。`
+  return `${head}请循环做一件事:调 ${HOLD_TOOL_NAME} 工具(sessionId 填 ${sessionId},waitRound 填你已见的轮次:首次 -1,开题小结后 0,第 N 轮小结后 N),不要输出别的,不要论证。`
+    + `每次返回分两种:一是某轮小结(开题/第 N 轮)——你把它发到会话区(照抄或 2-3 行复述,这是本轮在会话区的主节点),再调 hold 等下一轮;二是终局文案(辩论已结束/中止/失败)——照它收尾,本占位 turn 收。调用挂起期间=前台运行态。`
 }
 
 /** 后台 settlement 后收前台占位 turn(无僵尸):cancel 只停 turn,keepInbox 留住用户消息。
@@ -1005,11 +1065,34 @@ export const __testControllers = {
  */
 const holdWaiters = new Map<string, Set<() => void>>()
 
-/** hold 挂起:session 还在 running 就等 settlement;已落定直接过(纯等待,不做论证)。 */
-export function waitForDebateSettlement(sessionId: string, signal: AbortSignal): Promise<void> {
+/**
+ * hold 等待的轮次水位(ADR-0027 按轮唤醒):模型调 hold 时带上"已见轮次",
+ * 后台每完成一轮(开题=0,交锋=Rn,终局落定)就唤醒一次,模型发一条本轮小结
+ * (assistant 身份,自然留在会话区当主节点),再调 hold 等下一轮。
+ * 细节仍走 mirror(轨迹区折叠),各得其所。
+ * 水位语义:waitRoundWins/settledRoundWin 记录"已结算到哪",只增不减;
+ * hold 返回 done-now 仅当整局落定(running=false),否则返回 round.
+ */
+export type HoldWaitKind = { settled: true } | { settled: false; round: number; opening: boolean }
+
+export function holdSettledRoundOf(session: { status: DebateStatus; round: number }): number {
+  // 落定局水位记到 Infinity:任何 waitRound 都已达,hold 直接走结算文案。
+  if (session.status !== 'running') return Number.POSITIVE_INFINITY
+  return session.round
+}
+
+/** hold 挂起:session 还在 running 就等 settlement;已落定直接过(纯等待,不做论证)。
+ * waitRound:模型"已见轮次"(开题前=-1,开题=0,Rn=n)。后台水位已超过它即直接过,
+ * 否则挂起等下一轮完成/终局落定。终局落定一律唤醒(结算文案自我收尾)。
+ */
+export function waitForDebateSettlement(sessionId: string, signal: AbortSignal, waitRound?: number): Promise<HoldWaitKind> {
   const session = sessions.get(sessionId)
-  if (!session || shouldHoldResolve(session.status)) return Promise.resolve()
-  return new Promise<void>((resolve, reject) => {
+  if (!session || shouldHoldResolve(session.status)) return Promise.resolve({ settled: true })
+  const seen = typeof waitRound === 'number' && Number.isFinite(waitRound) ? waitRound : -1
+  const settledRound = holdSettledRoundOf(session)
+  // 开题完成(round 0) / 交锋轮完成(round n)都算进展:水位已超已见即过。
+  if (settledRound > seen) return Promise.resolve({ settled: false, round: settledRound, opening: settledRound === 0 })
+  return new Promise<HoldWaitKind>((resolve, reject) => {
     if (signal.aborted) { reject(new Error('aborted')); return }
     let set = holdWaiters.get(sessionId)
     if (!set) { set = new Set(); holdWaiters.set(sessionId, set) }
@@ -1017,7 +1100,10 @@ export function waitForDebateSettlement(sessionId: string, signal: AbortSignal):
       signal.removeEventListener('abort', onAbort)
       set!.delete(done)
       if (set!.size === 0) holdWaiters.delete(sessionId)
-      resolve()
+      const s = sessions.get(sessionId)
+      if (!s || shouldHoldResolve(s.status)) { resolve({ settled: true }); return }
+      const r = holdSettledRoundOf(s)
+      resolve({ settled: false, round: r, opening: r === 0 })
     }
     const onAbort = (): void => {
       signal.removeEventListener('abort', onAbort)
@@ -1042,7 +1128,10 @@ export function notifyHoldSettled(sessionId: string): number {
 
 /**
  * hold 工具本体(ADR-0027,注册包装薄转调,单测直测本函数)。
- * 语义:sessionId 指到的局还在 running 就挂起等 settlement;已落定直接回文案。
+ * 按轮唤醒:running 时挂起等下一轮完成/终局落定;已落定直接回结算文案。
+ * waitRound(可选):模型"已见轮次"(开题前=-1,开题=0,Rn=n),缺省 -1。
+ * 后台水位已超过已见即直接返回该轮小结,不挂起——模型循环调用即得
+ * 每轮一条主节点(assistant 身份,留在会话区),终局拿结算文案收尾。
  * exec.signal 必有(宿主 DSL 保证,缺了即接线缺陷):用户点停 → tool abort 打断
  * 等待 → abort 后台 controllers(双停前半) + 打断标记落盘(interruptMarkOf,
  * 转交 runHostDebate 收尾),再把 abort 抛回宿主。不做 signal 兜底——兜底的
@@ -1052,7 +1141,7 @@ export async function executeHoldTool(
   args: unknown,
   exec: { agent?: unknown; signal: AbortSignal },
 ): Promise<string> {
-  const a = (args ?? {}) as { sessionId?: unknown }
+  const a = (args ?? {}) as { sessionId?: unknown; waitRound?: unknown }
   // 模型照抄拉起语里的 id 时可能带上引号/空白,先剥一层再查表(拉起语本身已裸写,双保险)。
   const rawId = typeof a.sessionId === 'string' ? a.sessionId.trim().replace(/^["'“”]+|["'“”]+$/g, '').trim() : ''
   if (rawId === '') throw new Error('requires sessionId')
@@ -1060,9 +1149,13 @@ export async function executeHoldTool(
   const session = sessions.get(rawId)
   if (!session) throw new Error(`unknown debate session: ${rawId}`)
   if (shouldHoldResolve(session.status)) return holdReturnTextOf(session)
+  const rawWait = typeof a.waitRound === 'number' && Number.isFinite(a.waitRound) ? Math.floor(a.waitRound) : -1
   const signal = exec.signal
   try {
-    await waitForDebateSettlement(session.id, signal)
+    const waited = await waitForDebateSettlement(session.id, signal, rawWait)
+    if (waited.settled) return holdReturnTextOf(session)
+    const { round, opening } = waited
+    return holdRoundTextOf(session, round, opening)
   } catch (e) {
     // 前台 turn 被取消 → 后台跟停(双停),打断点落盘;状态机收尾交给 runHostDebate。
     try { controllers.get(session.id)?.abort() } catch { /* 忽略 */ }
@@ -1072,7 +1165,6 @@ export async function executeHoldTool(
     }
     throw e
   }
-  return holdReturnTextOf(session)
 }
 
 // ───────────────────────── 跨仓任务(task)辅助(ADR-0025) ─────────────────────────
@@ -1399,6 +1491,9 @@ export async function runHostDebate(
       }
     }
     setProgress(session, `开题完成,进入第 1/${session.config.maxRounds} 轮交锋`)
+    // 按轮唤醒(ADR-0027):开题完成即唤醒一次(水位 0),让占位模型发开题主节点。
+    // 唤醒失败不拦辩论——hold 侧水位已超已见会直接过,纯属早晚问题。
+    try { notifyHoldSettled(session.id) } catch { /* 唤醒失败不拦交锋 */ }
     let stop: 'convergence' | 'saturation' | 'maxRounds' | null = null
     for (let r = 1; r <= session.config.maxRounds; r++) {
       if (signal.aborted) throw new Error('aborted')
@@ -1443,6 +1538,10 @@ export async function runHostDebate(
       // 出处指针审计:存在性探针相对 targetCwd 验,只记 rounds[].pointerAudit,不 gate 停机。
       const exists = await pointerExistsFn(session.config.targetCwd)
       const verdict = recordRoundAndJudge(session, r, bOut, cOut, relayChars, exists ?? undefined)
+      // 按轮唤醒(ADR-0027):本轮已落 rounds,水位+1,占位模型发本轮小结主节点。
+      // 放判定之后、停机分支之前——convergence/saturation 的 break 也经过这里,
+      // 模型先拿本轮小结发主节点,终局落定再拿结算文案收尾。
+      try { notifyHoldSettled(session.id) } catch { /* 唤醒失败不拦停机判定 */ }
       if (verdict === 'convergence') {
         stop = 'convergence'
         const atCap = r >= session.config.maxRounds
@@ -2963,9 +3062,10 @@ export default {
       } else {
         ctx.tools.register(defineTool({
           name: HOLD_TOOL_NAME,
-          description: '前台占位:辩论在后台跑,本 turn 只等结论。调用即挂起直到辩论结束,不做论证;用户点停即双停。',
+          description: '前台占位:辩论在后台跑,本 turn 循环等每轮小结与终局。每次返回一轮小结就发到会话区再调 hold 等下一轮(waitRound 填已见轮次);终局文案照收尾。不做论证;用户点停即双停。',
           parameters: {
             sessionId: { type: 'string', required: true, description: '面板建单返回的 id' },
+            waitRound: { type: 'integer', description: '已见轮次:首次 -1,开题小结后 0,第 N 轮小结后 N(缺省 -1)' },
           },
           output: {
             schema: { type: 'string' },

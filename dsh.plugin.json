@@ -1,6 +1,6 @@
 {
   "id": "dsh-external/elec-session-enhance",
-  "version": "0.14.1",
+  "version": "0.14.2",
   "main": "./lib/index.js",
   "description": "DSH session-enhance toolkit: open-question deliberation and cross-repo task running.",
   "engines": {

@@ -142,6 +142,7 @@ const args = [
   tsc, ...srcFiles, ...testFiles,
   '--outDir', out, '--rootDir', root,
   '--module', 'commonjs', '--target', 'es2022', '--moduleResolution', 'node',
+  '--strict',
   '--skipLibCheck', '--esModuleInterop', '--resolveJsonModule', '--jsx', 'react-jsx',
 ]
 // tsc 会对 index.ts 里的 import.meta 报 TS1343(那是 ESM 专属),但仍会产出可用的 JS——
