@@ -46,7 +46,7 @@ import {
   type DebateRound,
   type TranscriptEntry,
 } from '../../src/debate/debate'
-import { normalizeConfig, extractModelEcho, isRouteIneffective, resolveAuto, settledDefsOf, settledItemsOfSession, stepOpen, stepRound, stepSynthesize, sessions, stepOpenResident, stepRoundResident, stepOpenSingle, stepRoundSingle, buildDebateForkSeed, createSingleThread, recordRoundAndJudge, interruptMarkOf, parentBusyOf, interruptPlanOf, HOLD_TOOL_NAME, shouldHoldResolve, holdReturnTextOf, holdPromptOf, closePlaceholderTurn, waitForDebateSettlement, notifyHoldSettled, executeHoldTool } from '../../src/index'
+import { normalizeConfig, extractModelEcho, isRouteIneffective, resolveAuto, settledDefsOf, settledItemsOfSession, stepOpen, stepRound, stepSynthesize, sessions, stepOpenResident, stepRoundResident, stepOpenSingle, stepRoundSingle, buildDebateForkSeed, createSingleThread, recordRoundAndJudge, interruptMarkOf, parentBusyOf, interruptPlanOf, interruptParentErrorOf, HOLD_TOOL_NAME, shouldHoldResolve, holdReturnTextOf, holdPromptOf, closePlaceholderTurn, waitForDebateSettlement, notifyHoldSettled, executeHoldTool } from '../../src/index'
 import { toolAllowFor, resolveToolAllow, cageLabel, visibleNamesOf, scopedToolGuard, turnVerdict, DEBATER_TOOL_ALLOW, SYNTH_TOOL_ALLOW, STEP_STALL_MS, STEP_HARD_CAP_MS } from '../../src/host/cage'
 import { extractHandoffConclusion, heartbeatOf, epochStopReason, epochStopDetail, isRetriableTurnError, driveResidentTurn, createResidentPair } from '../../src/host/resident'
 import { settledItemsOf } from '../../src/debate/debate'
@@ -1557,6 +1557,18 @@ describe('S17 双停与可观测(原名会话接管)·打断标记', () => {
   it('interruptPlanOf:一键双停的执行计划(先停 parent turn,后 abort 后台)', () => {
     // keepInbox:true 是关键——用户打断时说的那句话要留着,不清空。
     expect(interruptPlanOf('sid-1')).toEqual({ cancelKind: 'user', keepInbox: true })
+  })
+
+  it('interruptParentErrorOf:自建局报 no-placeholder-turn,老局缺 sid 报 no-parent-sid', () => {
+    // 有 parentSid 时前台有东西可停,返回空串(调用方走 cancel 分支)。
+    expect(interruptParentErrorOf('sid-1')).toBe('')
+    expect(interruptParentErrorOf('sid-1', false)).toBe('')
+    // 自建局:前台本来就没占位 turn,无事可停——可读原因,不是报错。
+    expect(interruptParentErrorOf(null, false)).toBe('no-placeholder-turn')
+    // 老记录缺 placeholderRaised(undefined)按缺 sid 处理,保持旧行为。
+    expect(interruptParentErrorOf(null)).toBe('no-parent-sid')
+    expect(interruptParentErrorOf(null, true)).toBe('no-parent-sid')
+    expect(interruptParentErrorOf(null, undefined)).toBe('no-parent-sid')
   })
 })
 

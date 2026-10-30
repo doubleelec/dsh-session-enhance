@@ -1521,6 +1521,15 @@ export function interruptPlanOf(_parentSid: string | null): { cancelKind: 'user'
   return { cancelKind: 'user', keepInbox: true }
 }
 
+/**
+ * 双停前台侧的原因码(ADR-0027):parentSid 为空时前台无事可停,给可读原因而不是报错。
+ * 自建 parent 的局本来就没占位 turn(placeholderRaised=false) → 'no-placeholder-turn';
+ * 老记录/未知原因缺 parentSid → 'no-parent-sid'。纯函数,可单测。
+ */
+export function interruptParentErrorOf(parentSid: string | null, placeholderRaised?: boolean): string {
+  return parentSid ? '' : (placeholderRaised === false ? 'no-placeholder-turn' : 'no-parent-sid')
+}
+
 /** 常驻辩手轮次卡死阈值。(与 turnVerdict/PROGRESS 一并迁 host/cage,常量重导出见顶。) */
 
 /** 子 agent 固定 delegation 声明。(已迁 host/resident,SUBAGENT_DELEGATION_CONTEXT 重导出见顶。) */
@@ -2145,7 +2154,7 @@ export default {
           } else {
             // 自建 parent 的局:前台本来就没占位 turn(placeholderRaised=false),
             // 双停只剩后台 abort,前台无事可停——记可读原因,不是报错。
-            parentError = session.placeholderRaised === false ? 'no-placeholder-turn' : 'no-parent-sid'
+            parentError = interruptParentErrorOf(session.parentSid, session.placeholderRaised)
           }
           try { controllers.get(session.id)?.abort() } catch { /* 忽略 */ }
           if (session.status === 'running') {
