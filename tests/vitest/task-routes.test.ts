@@ -7,7 +7,7 @@ import pluginDefault from '../../src/index'
 const { apply } = pluginDefault as unknown as { apply(ctx: never): void }
 
 /** fake ctx:假 agents/registry + 真路由 handler(沿用 launcher 的 fake 测法)。 */
-function makeCtx(recommendText?: string): {
+function makeCtx(recommendText?: string, persist?: { flush: () => Promise<void> }): {
   ctx: never
   routes: Array<{ path: string; handler(req: unknown, res: unknown): Promise<unknown> }>
   created: unknown[]
@@ -87,6 +87,8 @@ function makeCtx(recommendText?: string): {
         return { currentSelection(): { provider: string; model: string } { return { provider: 'local-proxy', model: 'opencode-muse-spark-1.3' } } }
       }
       if (name === 'storage') return undefined
+      // ADR-0036:持久化屏障桩。默认缺席(宿主裁剪场景)；显式注文才有 flush。
+      if (name === 'sessionPersistence') return persist
       return undefined
     },
     webServer: { register(r: never): void { routes.push(r as never) } },
@@ -259,6 +261,29 @@ describe('task routes(面板 HTTP 路由,ADR-0025)', () => {
     const m = await call(c4.routes, '/dsh-session-enhance/api/task/models', {})
     expect(m.ok).toBe(false)
     expect(String(m.error)).toContain('llm 服务不可用')
+  })
+
+  it('routes: build 触发落盘屏障(ADR-0036:flush 调一次,成功标记)', async () => {
+    let flushed = 0
+    const c = makeCtx(undefined, { async flush(): Promise<void> { flushed++ } })
+    apply(c.ctx)
+    const dir = join(tmpBase, 'tasks-persist')
+    const b = await call(c.routes, '/dsh-session-enhance/api/task/build', {
+      slug: 'persistok', involved: ['projA'], title: '落盘屏障', tasksRoot: dir,
+    })
+    expect(b.ok).toBe(true)
+    expect(flushed).toBe(1)
+    expect(b.persistOk).toBe(true)
+  })
+
+  it('routes: 持久化服务缺席时 build 仍成功但 persistOk=false(不挡任务,只说清)', async () => {
+    const dir = join(tmpBase, 'tasks-nopersist')
+    const b = await call(routes, '/dsh-session-enhance/api/task/build', {
+      slug: 'persistno', involved: ['projA'], title: '无持久化服务', tasksRoot: dir,
+    })
+    expect(b.ok).toBe(true)
+    expect(b.persistOk).toBe(false)
+    expect(String(b.persistError)).toContain('sessionPersistence')
   })
 
   it('routes: 中文路径显式报错', async () => {

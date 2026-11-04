@@ -2914,7 +2914,26 @@ export default {
             fs.mkdirSync(taskDir, { recursive: true })
             fs.writeFileSync(path.join(taskDir, 'directive.md'), out.directive, 'utf-8')
             for (const f of out.toFiles) fs.writeFileSync(path.join(taskDir, f.fileName), f.text, 'utf-8')
-            return writeJson(res, { ok: true, taskDir, taskDirName: out.taskDirName, files: ['directive.md', ...out.toFiles.map((f) => f.fileName)] })
+            // 空发起会话落盘屏障(ADR-0036):宿主只在 flush/append 时才把会话物化到盘上,
+            // 建任务这种"停在空会话里干正事"的流程必须显式 flush 一次,否则会话在内存里,
+            // 刷新页面后从列表消失(宿主 sessionQuery 只读持久化)。flush 失败不挡建任务,
+            // 只回传给面板提示(用户刷新会丢会话,这是该知道的事)。
+            let persistOk: boolean | null = null
+            let persistError: string | null = null
+            try {
+              const persistence = ctx.get('sessionPersistence') as { flush?: () => Promise<void> } | undefined
+              if (persistence && typeof persistence.flush === 'function') {
+                await persistence.flush()
+                persistOk = true
+              } else {
+                persistOk = false
+                persistError = 'sessionPersistence unavailable(宿主未挂载持久化服务)'
+              }
+            } catch (e) {
+              persistOk = false
+              persistError = e instanceof Error ? e.message : String(e)
+            }
+            return writeJson(res, { ok: true, taskDir, taskDirName: out.taskDirName, files: ['directive.md', ...out.toFiles.map((f) => f.fileName)], persistOk, ...(persistError !== null ? { persistError } : {}) })
           } catch (e) {
             return writeJson(res, { ok: false, error: e instanceof Error ? e.message : String(e) })
           }

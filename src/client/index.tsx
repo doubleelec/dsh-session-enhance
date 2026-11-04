@@ -1341,7 +1341,7 @@ function TaskDialog(props: { onClose: () => void; useSessions?: (s: unknown) => 
     try {
       // 任务描述即标题(ADR-0029):directive/to 的标题位直接用描述,超长截 80。
       const titleText = desc.trim().length > 80 ? `${desc.trim().slice(0, 80)}…` : desc.trim()
-      const r = await api<{ ok: boolean; taskDir?: string; error?: string }>('task/build', {
+      const r = await api<{ ok: boolean; taskDir?: string; error?: string; persistOk?: boolean; persistError?: string }>('task/build', {
         slug: slug.trim(), involved, title: titleText !== '' ? titleText : slug.trim(),
         tasksRoot: finalTasksRoot,
         parentRoot: parentRoot.trim() !== '' ? parentRoot.trim() : undefined,
@@ -1351,6 +1351,8 @@ function TaskDialog(props: { onClose: () => void; useSessions?: (s: unknown) => 
       if (!r.ok || !r.taskDir) { setError(r.error ?? 'build failed'); return }
       setTaskDir(r.taskDir)
       setTasksRoot(finalTasksRoot)
+      // ADR-0036:落盘屏障失败不挡建任务,但要在面板说清(刷新后发起会话会丢)。
+      if (r.persistOk === false) setError(`任务目录已建,但发起会话没落盘(刷新页面会丢失):${r.persistError ?? 'unknown'} —— 先随便发一句话把会话坐实再继续`)
       // 建目录成功即进预览:逐仓列出将建会话(仓→cwd→provider/model),确认才真正 launch。
       const root = parentRoot.trim()
       const prov = provider.trim() !== '' ? provider.trim() : '(宿主默认)'
