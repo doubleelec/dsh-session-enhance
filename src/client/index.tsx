@@ -26,6 +26,7 @@ import {
   loadTaskPrefs, saveTaskPrefs, defaultParentRoot, suggestScanDefaults,
   suggestSlugFromText,
   applyRecommendDefaults,
+  loadTaskSnapshot, saveTaskSnapshot, clearTaskSnapshot,
 } from './task'
 import {
   DIALOG_DEFAULT_H, DIALOG_DEFAULT_W,
@@ -1180,26 +1181,61 @@ function TaskDialog(props: { onClose: () => void; useSessions?: (s: unknown) => 
     const cur = snap?.byId?.[liveSid]
     if (typeof cur?.cwd === 'string' && cur.cwd !== '') liveCwd = cur.cwd
   } catch { /* store 不可用时用 input.right + 服务线缓存 */ }
+  // 刷新恢复(ADR-0037):按发起会话存的快照,同会话同工程才恢复,换会话/换工程一律白纸。
+  // 恢复时机=挂载首扫前:快照里的 parentRoot 必须等于当前会话 cwd(用户决定工程归属),
+  // 不等说明切了工程,快照作废(免得恢复出别的工程的现场)。
+  const restoredSnap = (() => {
+    try {
+      const s = loadTaskSnapshot(liveSid)
+      if (s === null) return null
+      const cwdNow = defaultParentRoot(liveCwd)
+      if (cwdNow === '' || s.parentRoot.trim() === '' || s.scannedRoot.trim() === '') return null
+      if (s.parentRoot.trim() !== cwdNow || s.scannedRoot.trim() !== cwdNow) return null
+      return s
+    } catch { return null }
+  })()
   // 父目录默认只用当前会话 cwd(用户拍板):偏好里的旧值跨工程会串台,直接忽略。
-  const [parentRoot, setParentRoot] = useState(defaultParentRoot(liveCwd))
+  // 有快照时各项以快照为准(快照只在"同会话同工程"时才算数,见上)。
+  const [parentRoot, setParentRoot] = useState(restoredSnap !== null ? restoredSnap.parentRoot : defaultParentRoot(liveCwd))
   // 任务描述:入口收草稿(prefillTaskDesc),面板可改;recommend 按它推荐涉及仓。
-  const [desc, setDesc] = useState(prefillTaskDesc)
-  const [repos, setRepos] = useState<TaskRepo[] | null>(null)
-  const [checked, setChecked] = useState<string[]>([])
-  const [reasons, setReasons] = useState<Record<string, string>>({})
-  const [slug, setSlug] = useState('')
+  // 有快照时描述以快照为准(草稿是别的会话的东西);无快照才用入口草稿。
+  const [desc, setDesc] = useState(restoredSnap !== null && restoredSnap.desc !== '' ? restoredSnap.desc : prefillTaskDesc)
+  // 恢复的现场(ADR-0037):结构缓存直接用,不重扫(重扫会清空已审核的勾选);
+  // taskDir/会话 id 回填,回信由挂载验盘 effect 经 collect 取回。
+  const [repos, setRepos] = useState<TaskRepo[] | null>(() => {
+    if (restoredSnap === null || restoredSnap.repos.length === 0) return null
+    const kinds = new Set(['repo', 'part', 'external', 'unknown'])
+    return restoredSnap.repos.map((r) => ({
+      relPath: r.relPath,
+      kind: (kinds.has(r.kind) ? r.kind : 'unknown') as TaskRepo['kind'],
+      ...(typeof r.absPath === 'string' && r.absPath !== '' ? { absPath: r.absPath } : {}),
+    }))
+  })
+  const [checked, setChecked] = useState<string[]>(restoredSnap !== null ? restoredSnap.checked : [])
+  const [reasons, setReasons] = useState<Record<string, string>>(restoredSnap !== null ? restoredSnap.reasons : {})
+  const [slug, setSlug] = useState(restoredSnap !== null ? restoredSnap.slug : '')
   // 任务描述即标题(ADR-0029):directive/to 的标题位直接用描述(超长截 80),
   // 一句话标题字段已删,不再维护 title/autoTitle。
-  const [tasksRoot, setTasksRoot] = useState(prefs.tasksRoot)
-  const [templateDir, setTemplateDir] = useState(prefs.templateDir)
-  const [provider, setProvider] = useState(prefs.provider)
-  const [model, setModel] = useState(prefs.model)
-  const [taskDir, setTaskDir] = useState<string | null>(null)
+  const [tasksRoot, setTasksRoot] = useState(restoredSnap !== null && restoredSnap.tasksRoot !== '' ? restoredSnap.tasksRoot : prefs.tasksRoot)
+  const [templateDir, setTemplateDir] = useState(restoredSnap !== null ? restoredSnap.templateDir : prefs.templateDir)
+  const [provider, setProvider] = useState(restoredSnap !== null ? restoredSnap.provider : prefs.provider)
+  const [model, setModel] = useState(restoredSnap !== null ? restoredSnap.model : prefs.model)
+  const [taskDir, setTaskDir] = useState<string | null>(restoredSnap !== null ? restoredSnap.taskDir : null)
   const [preview, setPreview] = useState<Array<{ repo: string; cwd: string }> | null>(null)
-  const [sessions, setSessions] = useState<Array<{ repo: string; ok: boolean; sessionId?: string; error?: string }> | null>(null)
+  // 恢复的执行会话(ADR-0037):id 仅供到会话列表跟进,不做活体校验(宿主 store 就绪时序不定,
+  // 误判"消失"的代价比展示旧 id 更大);任务连续性以 taskDir + 回信为准,见 ADR。
+  const [sessions, setSessions] = useState<Array<{ repo: string; ok: boolean; sessionId?: string; error?: string }> | null>(() => (
+    restoredSnap !== null && restoredSnap.sessions.length > 0
+      ? restoredSnap.sessions.map((s) => ({ repo: s.repo, ok: true, sessionId: s.sessionId }))
+      : null
+  ))
   const [backs, setBacks] = useState<Array<{ file: string; text: string }> | null>(null)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // 恢复标记(中性条,不是告警):告诉用户这页是从快照回来的,taskDir/会话 id 仍要验盘。
+  const [restoredMark, setRestoredMark] = useState(restoredSnap !== null)
+  // 快照过期(ADR-0032 fail-loud):taskDir 验盘失败才置,附一键重建,不静默丢。
+  const [staleSnap, setStaleSnap] = useState<string | null>(null)
   // provider/model 下拉数据(ADR-0032):llm 服务给列表;取不到就是接线缺陷,报错不退化。
   const [modelsInfo, setModelsInfo] = useState<{
     ok: boolean
@@ -1218,6 +1254,36 @@ function TaskDialog(props: { onClose: () => void; useSessions?: (s: unknown) => 
     setChecked((prev) => (prev.includes(rel) ? prev.filter((r) => r !== rel) : [...prev, rel]))
   }
 
+  /** 当前面板现场写快照(ADR-0037):scan/recommend/build/launch 成功后各调一次,刷新回来不断档。 */
+  const persistSnapshot = (next: {
+    desc?: string; checked?: string[]; reasons?: Record<string, string>; slug?: string
+    parentRoot?: string; tasksRoot?: string; templateDir?: string; provider?: string; model?: string
+    taskDir?: string | null; sessions?: Array<{ repo: string; sessionId: string }>
+    repos?: TaskRepo[]; scannedRoot?: string
+  }): void => {
+    try {
+      const cur = loadTaskSnapshot(liveSid)
+      saveTaskSnapshot(liveSid, {
+        v: 1,
+        desc: next.desc ?? cur?.desc ?? desc,
+        checked: next.checked ?? cur?.checked ?? checked,
+        reasons: next.reasons ?? cur?.reasons ?? reasons,
+        slug: next.slug ?? cur?.slug ?? slug,
+        parentRoot: next.parentRoot ?? cur?.parentRoot ?? parentRoot,
+        tasksRoot: next.tasksRoot ?? cur?.tasksRoot ?? tasksRoot,
+        templateDir: next.templateDir ?? cur?.templateDir ?? templateDir,
+        provider: next.provider ?? cur?.provider ?? provider,
+        model: next.model ?? cur?.model ?? model,
+        taskDir: next.taskDir !== undefined ? next.taskDir : (cur?.taskDir ?? taskDir),
+        sessions: next.sessions ?? cur?.sessions ?? [],
+        repos: next.repos !== undefined
+          ? next.repos.map((r) => ({ relPath: r.relPath, kind: r.kind, ...(r.absPath ? { absPath: r.absPath } : {}) }))
+          : (cur?.repos ?? []),
+        scannedRoot: next.scannedRoot ?? cur?.scannedRoot ?? scannedRoot,
+      })
+    } catch { /* 快照丢了只是刷新后白纸,不挡当前任务 */ }
+  }
+
   const scan = async (root: string): Promise<void> => {
     if (root === '') { setError('当前会话没有工作区:先在目标父目录的会话里打开面板'); return }
     setBusy('扫描中…'); setError(null); setRepos(null); setChecked([]); setReasons({}); setPreview(null)
@@ -1234,6 +1300,7 @@ function TaskDialog(props: { onClose: () => void; useSessions?: (s: unknown) => 
       if (tasksRoot.trim() === '') setTasksRoot(suggestTasksRoot(root))
       saveTaskPrefs({ parentRoot: root, tasksRoot, templateDir, provider, model })
       // 扫完即推荐:任务描述来自输入框草稿(入口保证非空)。
+      persistSnapshot({ parentRoot: root, repos: found, scannedRoot: root, checked: [], reasons: {}, slug: 'task' })
       await recommend(found)
     } catch (e) {
       setError(String(e))
@@ -1279,7 +1346,9 @@ function TaskDialog(props: { onClose: () => void; useSessions?: (s: unknown) => 
       // slug:AI 给的缩写优先(它看得懂中文任务),没有才回落到词表启发(ADR-0033)。
       const aiSlug = String(r.slug ?? '').trim()
       const aiTitle = String(r.title ?? '').trim()
-      setSlug(aiSlug !== '' ? aiSlug : suggestSlugFromText(aiTitle !== '' ? aiTitle : text))
+      const finalSlug = aiSlug !== '' ? aiSlug : suggestSlugFromText(aiTitle !== '' ? aiTitle : text)
+      setSlug(finalSlug)
+      persistSnapshot({ desc: text, checked: merged.checked, reasons: r.reasons ?? {}, slug: finalSlug, repos: found })
     } catch (e) {
       setChecked([]); setReasons({})
       setRecFail({ reason: `请求失败:${String(e)}`, candidates: [], descriptors: {}, rawHead: '' })
@@ -1291,11 +1360,41 @@ function TaskDialog(props: { onClose: () => void; useSessions?: (s: unknown) => 
   }
 
   // 打开面板即扫一次:父目录=当前会话 cwd(首扫用 liveCwd 快照,不等服务线),无需点按钮。
+  // 有快照时跳过重扫(ADR-0037):结构缓存直接用,taskDir 经 collect 验盘,回信自动取回。
   const autoScanned = useRef(false)
   useEffect(() => {
     if (autoScanned.current) return
     autoScanned.current = true
-    void scan(defaultParentRoot(liveCwd))
+    const snap = restoredSnap
+    if (snap !== null && snap.repos.length > 0) {
+      setScannedRoot(snap.scannedRoot)
+      setRecommendedDesc(snap.desc.trim())
+      setRestoredMark(true)
+      if (snap.taskDir !== null && snap.taskDir !== '') {
+        void (async () => {
+          try {
+            const r = await api<{ ok: boolean; backs?: Array<{ file: string; text: string }>; error?: string }>('task/collect', { taskDir: snap.taskDir as string })
+            if (!r.ok) {
+              // taskDir 没了:fail-loud,表单保留,一键重建(ADR-0032)。
+              setTaskDir(null); setSessions(null); setBacks(null); setPreview(null)
+              setRestoredMark(false)
+              setStaleSnap(r.error ?? 'collect failed')
+              try { clearTaskSnapshot(liveSid) } catch { /* 忽略 */ }
+              return
+            }
+            const arr = r.backs ?? []
+            if (arr.length > 0) setBacks(arr)
+          } catch (e) {
+            setTaskDir(null); setSessions(null); setBacks(null); setPreview(null)
+            setRestoredMark(false)
+            setStaleSnap(String(e))
+            try { clearTaskSnapshot(liveSid) } catch { /* 忽略 */ }
+          }
+        })()
+      }
+    } else {
+      void scan(defaultParentRoot(liveCwd))
+    }
     void (async () => {
       try {
         const m = await api<{
@@ -1359,6 +1458,7 @@ function TaskDialog(props: { onClose: () => void; useSessions?: (s: unknown) => 
       const mod = model.trim() !== '' ? model.trim() : '(宿主默认)'
       setPreview(involved.map((repo) => ({ repo, cwd: `${root}/${repo} · ${prov} / ${mod}` })))
       saveTaskPrefs({ parentRoot: parentRoot.trim(), tasksRoot: finalTasksRoot, templateDir, provider, model })
+      persistSnapshot({ desc, checked: involved, reasons, slug: slug.trim(), parentRoot: parentRoot.trim(), tasksRoot: finalTasksRoot, templateDir, provider, model, taskDir: r.taskDir, scannedRoot })
     } catch (e) {
       setError(String(e))
     } finally {
@@ -1379,8 +1479,14 @@ function TaskDialog(props: { onClose: () => void; useSessions?: (s: unknown) => 
         skipIssuedCheck: true,
       })
       if (!r.ok) { setError(r.error ?? 'launch failed'); return }
-      setSessions(r.sessions ?? [])
+      const got = r.sessions ?? []
+      setSessions(got)
       setPreview(null)
+      persistSnapshot({
+        taskDir, checked,
+        sessions: got.filter((s) => s.ok && typeof s.sessionId === 'string' && s.sessionId !== '')
+          .map((s) => ({ repo: s.repo, sessionId: s.sessionId as string })),
+      })
     } catch (e) {
       setError(String(e))
     } finally {
@@ -1438,6 +1544,27 @@ function TaskDialog(props: { onClose: () => void; useSessions?: (s: unknown) => 
           </div>
         )}
         <div className={C('dshe-note')}>打开自动扫描当前会话目录 → AI 按任务描述推荐涉及仓 → 你审核勾选 → 确认拉起(原生回车只发消息,不触发任务)。</div>
+        {/* 恢复标记(ADR-0037,中性条不是告警):说明这页是从快照回来的,现场=读快照 + taskDir 验盘。 */}
+        {restoredMark && (
+          <div className={C('dshe-restored')}>已从本会话的快照恢复(描述/勾选/任务目录/执行会话/回信):任务连续性以任务目录 + 回信为准,执行会话 id 仅供到会话列表跟进。</div>
+        )}
+        {staleSnap !== null && (
+          <div className={C('dshe-error')}>
+            上次的任务目录已不在盘上({staleSnap}):表单保留,快照已清。
+            <button
+              type="button"
+              className={C('dshe-copybtn')}
+              onClick={() => {
+                setStaleSnap(null)
+                setTaskDir(null); setSessions(null); setBacks(null); setPreview(null)
+                try { clearTaskSnapshot(liveSid) } catch { /* 忽略 */ }
+                void scan(parentRoot.trim() !== '' ? parentRoot.trim() : defaultParentRoot(liveCwd))
+              }}
+            >
+              一键重建(重扫并推荐)
+            </button>
+          </div>
+        )}
         <div className={C('dshe-field')}>
           <span>任务描述(AI 按它推荐涉及仓,改完失焦即重推)</span>
           <textarea

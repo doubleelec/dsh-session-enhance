@@ -10,6 +10,11 @@ import {
   suggestScanDefaults,
   suggestSlugFromText,
   applyRecommendDefaults,
+  loadTaskSnapshot,
+  saveTaskSnapshot,
+  clearTaskSnapshot,
+  emptyTaskSnapshot,
+  normalizeTaskSnapshot,
 } from '../../src/client/task'
 
 describe('parseInvolvedLines', () => {
@@ -145,5 +150,48 @@ describe('applyRecommendDefaults', () => {
   it('都不中则空选(提示手勾)', () => {
     expect(applyRecommendDefaults(found, [])).toEqual({ checked: [] })
     expect(applyRecommendDefaults(found, ['nope'])).toEqual({ checked: [] })
+  })
+})
+
+describe('task snapshot(ADR-0037:按发起会话存 localStorage,node 无 window)', () => {
+  it('node 下无 storage:读回 null,写/清不抛', () => {
+    expect(loadTaskSnapshot('sid-1')).toBe(null)
+    expect(() => saveTaskSnapshot('sid-1', emptyTaskSnapshot())).not.toThrow()
+    expect(() => clearTaskSnapshot('sid-1')).not.toThrow()
+    expect(loadTaskSnapshot('')).toBe(null)
+  })
+
+  it('normalize:版本不对/形状不对回 null,不抛', () => {
+    expect(normalizeTaskSnapshot(null)).toBe(null)
+    expect(normalizeTaskSnapshot(undefined)).toBe(null)
+    expect(normalizeTaskSnapshot({})).toBe(null)
+    expect(normalizeTaskSnapshot({ v: 2, desc: 'x' })).toBe(null)
+    expect(normalizeTaskSnapshot('x')).toBe(null)
+  })
+
+  it('normalize:坏字段逐个收敛,不整单作废', () => {
+    const s = normalizeTaskSnapshot({
+      v: 1, desc: 1, checked: 'nope', reasons: ['x'], slug: 2,
+      parentRoot: 'D:/work', tasksRoot: '', templateDir: '', provider: '', model: '',
+      taskDir: 5, sessions: [{ repo: 'a' }, { repo: 'b', sessionId: 's1' }, null],
+      repos: [{ relPath: 'a', kind: 'repo', absPath: 'D:/a' }, { relPath: 1, kind: 'repo' }],
+      scannedRoot: 'D:/work',
+    })
+    expect(s).not.toBe(null)
+    expect(s!.desc).toBe('')
+    expect(s!.checked).toEqual([])
+    expect(s!.reasons).toEqual({})
+    expect(s!.taskDir).toBe(null)
+    expect(s!.sessions).toEqual([{ repo: 'b', sessionId: 's1' }])
+    expect(s!.repos).toEqual([{ relPath: 'a', kind: 'repo', absPath: 'D:/a' }])
+    expect(s!.parentRoot).toBe('D:/work')
+  })
+
+  it('空快照与各 useState 初值同口径', () => {
+    expect(emptyTaskSnapshot()).toEqual({
+      v: 1, desc: '', checked: [], reasons: {}, slug: '',
+      parentRoot: '', tasksRoot: '', templateDir: '', provider: '', model: '',
+      taskDir: null, sessions: [], repos: [], scannedRoot: '',
+    })
   })
 })

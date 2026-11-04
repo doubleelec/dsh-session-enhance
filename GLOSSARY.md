@@ -378,6 +378,13 @@ _Avoid_: 文件夹名，工程名，标题缩写，拼音缩写
 面板显示完整 `task_dir` 预览（slug 已定、时间戳待建时确定），不再只显示根目录（ADR-0033）。
 _Avoid_: 输出目录，工作目录，cross-tasks 目录
 
+**面板进度快照（task_snapshot）**:
+按发起会话存 localStorage 的面板现场（`dshe-task-snapshot:<sid>`）：
+描述/勾选/理由/slug/目录/执行会话 id/结构缓存。刷新后面板按"同会话同工程"恢复，
+taskDir 经 `collect` 验盘；过期则 fail-loud + 一键重建。换会话/换工程/清缓存一律白纸
+（ADR-0037）。与全局 prefs（`dshe-task-prefs`）分家——后者跨会话，曾因串台被否。
+_Avoid_: 偏好，缓存，任务存档，task.json
+
 **模板目录（template_dir）**:
 可选，含 `directive_template.md` 与 `to_template.md` 的编排库目录：前者出总指示骨架
 （slug/version/involved/标题等占位后填），后者出每仓派活骨架。留空即用内建默认

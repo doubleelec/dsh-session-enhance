@@ -172,13 +172,15 @@ flowchart TD
     `build` / `launch` 已去 lead（ADR-0029），模板缺省走内建（ADR-0031）。
   - `src/client` 任务半区：`✦ 增强会话`菜单（`InputButton` 二选一：辩论 / 多仓任务，
     空草稿整钮禁用，ADR-0028 反转 ADR-0025 可达性）+ TaskDialog（scan → recommend →
-    审核勾选 → build → 预览 → launch，偏好存 localStorage；无牵头仓、无标题字段，
+    审核勾选 → build → 预览 → launch，偏好存 localStorage；刷新后按发起会话恢复快照
+    （ADR-0037：同会话同工程才恢复 + taskDir 验盘 + 过期一键重建）；无牵头仓、无标题字段，
     任务描述即标题；slug 由推荐一并拟成 2-3 个英文词、≤20 字符（ADR-0033，词表启发仅兜底）；
     主界面显示完整任务目录预览（`<tasks_root>/<slug>-<stamp>`），任务根目录与模板目录收进
     "高级"（模板缺省内建，ADR-0031），建任务与取消两键等权；ADR-0029）+ `src/client/task.ts` 纯逻辑
-    （slug 缩写 / 推荐合并 / 校验 / 偏好，无 React / CSS，node environment 直测；
+    （slug 缩写 / 推荐合并 / 校验 / 偏好 / 快照，无 React / CSS，node environment 直测；
     `suggestSlugFromText` / `applyRecommendDefaults` / `suggestScanDefaults` /
-    `suggestTasksRoot`（`.cross-tasks`）/ `validateTaskBuild` / `loadTaskPrefs` / `saveTaskPrefs`）。
+    `suggestTasksRoot`（`.cross-tasks`）/ `validateTaskBuild` / `loadTaskPrefs` / `saveTaskPrefs` /
+    `loadTaskSnapshot` / `saveTaskSnapshot` / `clearTaskSnapshot` / `normalizeTaskSnapshot`）。
     原生发送键不可拦截——任务启动必须点面板显式按钮（`inputActions` 全仓只有 `setDraft`）。
 
 ### 4.3 Module Documentation Map

@@ -30,6 +30,11 @@ def test_client_pure_surface_exists():
         "suggestScanDefaults",
         "suggestSlugFromText",
         "applyRecommendDefaults",
+        "loadTaskSnapshot",
+        "saveTaskSnapshot",
+        "clearTaskSnapshot",
+        "emptyTaskSnapshot",
+        "normalizeTaskSnapshot",
     ):
         assert symbol in task, f"src/client/task.ts missing: {symbol}"
 
@@ -96,6 +101,22 @@ def test_client_task_recommend_wired():
     assert "setTitle" not in stripped and "一句话标题" not in stripped, (
         "panel must not carry a separate title field (ADR-0029)"
     )
+
+
+def test_client_task_snapshot_restore_wired():
+    """TaskDialog restores progress from a per-session snapshot after refresh (ADR-0037).
+
+    Same project + same initiating session restores the scene (desc/checked/
+    taskDir/sessions/backs); a different session or cwd means a blank panel,
+    never cross-project leakage. Stale taskDir fails loud with one-click rebuild.
+    """
+    src = _read(PANEL)
+    assert "loadTaskSnapshot" in src, "panel must read the per-session task snapshot"
+    assert "saveTaskSnapshot" in src, "panel must persist the task snapshot on scan/recommend/build/launch"
+    assert "clearTaskSnapshot" in src, "panel must clear the snapshot on stale taskDir / one-click rebuild"
+    assert "restoredSnap" in src, "panel must gate restore on same-session same-cwd snapshot"
+    assert "restoredMark" in src, "panel must show a neutral restored mark, not an alert"
+    assert "staleSnap" in src, "panel must fail loud on stale taskDir with one-click rebuild"
 
 
 def test_client_no_send_key_intercept():

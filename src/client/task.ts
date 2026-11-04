@@ -185,7 +185,7 @@ export interface TaskPrefs {
 
 const PREFS_KEY = 'dshe-task-prefs'
 
-function prefsStore(): { getItem(k: string): string | null; setItem(k: string, v: string): void } | null {
+function prefsStore(): { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem(k: string): void } | null {
   try {
     if (typeof localStorage === 'undefined') return null
     return localStorage
@@ -223,5 +223,138 @@ export function saveTaskPrefs(p: TaskPrefs): void {
     store.setItem(PREFS_KEY, JSON.stringify(p))
   } catch {
     /* 忽略 */
+  }
+}
+
+/**
+ * 面板进度快照(ADR-0037):按发起会话存 localStorage,刷新后回到建任务的现场。
+ *
+ * 为什么按会话存:全局 prefs 曾因跨工程串台被用户否掉(ADR-0036 背景),快照必须带
+ * 作用域——同工程同会话才恢复,换会话/换工程一律不碰,宁可白纸。
+ * 为什么存 localStorage 不存 task.json:草稿(描述/勾选/slug/tasksRoot 等)是面板
+ * 内存态,任务目录是 build 产物;恢复现场 = 「读快照 + 验 taskDir 还在」,
+ * 目录没了就报错可一键重建,不静默丢(ADR-0032 fail-loud)。
+ */
+export interface TaskPanelSnapshot {
+  /** 快照版本:以后加字段时旧快照整体作废,不做逐字段迁移。 */
+  v: 1
+  /** 表单:任务描述原文(面板可改的那份)。 */
+  desc: string
+  /** 审核后的勾选(涉及仓)。 */
+  checked: string[]
+  /** AI 理由(勾选旁展示的那份)。 */
+  reasons: Record<string, string>
+  /** 任务英文缩写。 */
+  slug: string
+  parentRoot: string
+  tasksRoot: string
+  templateDir: string
+  provider: string
+  model: string
+  /** 建好的任务目录(完整路径);null = 还没 build。 */
+  taskDir: string | null
+  /** 拉起的执行会话(repo → sessionId,失败的不记,刷新后只展示 id)。 */
+  sessions: Array<{ repo: string; sessionId: string }>
+  /** 扫描结构缓存(恢复后免重扫;absPath 留着供 recommend 用,缺了就只能展示);扫不到/过期则重扫)。 */
+  repos: Array<{ relPath: string; kind: string; absPath?: string }>
+  /** 扫描发生时的父目录:与当前 liveCwd 不一致说明换了工程,不恢复。 */
+  scannedRoot: string
+}
+
+const SNAP_KEY_PREFIX = 'dshe-task-snapshot:'
+
+function snapKey(sessionId: string): string {
+  return `${SNAP_KEY_PREFIX}${sessionId}`
+}
+
+/** 快照归一(纯函数,可单测):版本不对/形状不对回 null,不抛;字段逐个收敛(坏字段回空,不整单作废)。 */
+export function normalizeTaskSnapshot(p: unknown): TaskPanelSnapshot | null {
+  if (p === null || typeof p !== 'object' || (p as { v?: unknown }).v !== 1) return null
+  const q = p as Partial<TaskPanelSnapshot>
+  return {
+    v: 1,
+    desc: typeof q.desc === 'string' ? q.desc : '',
+    checked: Array.isArray(q.checked) ? q.checked.map(String) : [],
+    reasons: q.reasons !== null && typeof q.reasons === 'object' && !Array.isArray(q.reasons)
+      ? Object.fromEntries(Object.entries(q.reasons as Record<string, unknown>).map(([k, v]) => [k, String(v ?? '')]))
+      : {},
+    slug: typeof q.slug === 'string' ? q.slug : '',
+    parentRoot: typeof q.parentRoot === 'string' ? q.parentRoot : '',
+    tasksRoot: typeof q.tasksRoot === 'string' ? q.tasksRoot : '',
+    templateDir: typeof q.templateDir === 'string' ? q.templateDir : '',
+    provider: typeof q.provider === 'string' ? q.provider : '',
+    model: typeof q.model === 'string' ? q.model : '',
+    taskDir: typeof q.taskDir === 'string' ? q.taskDir : null,
+    sessions: Array.isArray(q.sessions)
+      ? (q.sessions as unknown[])
+        .filter((s): s is { repo: string; sessionId: string } =>
+          s !== null && typeof s === 'object'
+          && typeof (s as { repo?: unknown }).repo === 'string'
+          && typeof (s as { sessionId?: unknown }).sessionId === 'string')
+        .map((s) => ({ repo: s.repo, sessionId: s.sessionId }))
+      : [],
+    repos: Array.isArray(q.repos)
+      ? (q.repos as unknown[])
+        .filter((r): r is { relPath: string; kind: string; absPath?: string } =>
+          r !== null && typeof r === 'object'
+          && typeof (r as { relPath?: unknown }).relPath === 'string'
+          && typeof (r as { kind?: unknown }).kind === 'string'
+          && ((r as { absPath?: unknown }).absPath === undefined
+            || typeof (r as { absPath?: unknown }).absPath === 'string'))
+        .map((r) => (typeof r.absPath === 'string' && r.absPath !== ''
+          ? { relPath: r.relPath, kind: r.kind, absPath: r.absPath }
+          : { relPath: r.relPath, kind: r.kind }))
+      : [],
+    scannedRoot: typeof q.scannedRoot === 'string' ? q.scannedRoot : '',
+  }
+}
+
+/** 读快照:无/坏/版本不对一律回 null,不抛(坏快照 = 没快照,面板白纸开)。 */
+export function loadTaskSnapshot(sessionId: string): TaskPanelSnapshot | null {
+  try {
+    const sid = String(sessionId ?? '').trim()
+    if (sid === '') return null
+    const store = prefsStore()
+    if (store === null) return null
+    const raw = store.getItem(snapKey(sid))
+    if (raw === null) return null
+    return normalizeTaskSnapshot(JSON.parse(raw) as unknown)
+  } catch {
+    return null
+  }
+}
+
+/** 写快照:失败静默(快照丢了只是刷新后白纸,不挡当前任务)。 */
+export function saveTaskSnapshot(sessionId: string, snap: TaskPanelSnapshot): void {
+  try {
+    const sid = String(sessionId ?? '').trim()
+    if (sid === '') return
+    const store = prefsStore()
+    if (store === null) return
+    store.setItem(snapKey(sid), JSON.stringify({ ...snap, v: 1 }))
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/** 清快照:一键重建/任务作废时调,失败静默。 */
+export function clearTaskSnapshot(sessionId: string): void {
+  try {
+    const sid = String(sessionId ?? '').trim()
+    if (sid === '') return
+    const store = prefsStore()
+    if (store === null) return
+    store.removeItem(snapKey(sid))
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/** 空快照:白纸开面板时的起点(与各 useState 初值同口径)。 */
+export function emptyTaskSnapshot(): TaskPanelSnapshot {
+  return {
+    v: 1, desc: '', checked: [], reasons: {}, slug: '',
+    parentRoot: '', tasksRoot: '', templateDir: '', provider: '', model: '',
+    taskDir: null, sessions: [], repos: [], scannedRoot: '',
   }
 }
